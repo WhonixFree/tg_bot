@@ -1,0 +1,849 @@
+2328 REST API Reference
+
+Technical specification for cryptocurrency payment processing and withdrawal integration.
+1. General Information
+
+Technical specification for cryptocurrency payment processing and withdrawal integration.
+Base URL (production)
+GET
+https://api.2328.io/api
+
+All requests are made over HTTPS. Requests without HTTPS are blocked.
+2. Authentication & Request Signing
+2.1. Headers
+
+Every API request (except incoming webhooks) must contain:
+Header	Type	Req.	Description
+Content-Type	string	yes	Always application/json
+project	string	yes	Merchant project UUID
+sign	string	yes	HMAC-SHA256 request signature
+2.2. Signature Algorithm (API Requests, POST)
+
+1. Serialize the request body to JSON.
+
+2. Encode the JSON in Base64.
+
+3. Compute HMAC-SHA256 of the Base64 string using API_KEY.
+
+function apiSign(array $data, string $apiKey): string {
+    $json = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $base64 = base64_encode($json);
+    return hash_hmac('sha256', $base64, $apiKey);
+}
+
+2.3. Signature for Bodyless Requests (GET)
+
+For requests with empty body (e.g., GET /v1/payout/status/{uuid}):
+
+$sign = hash_hmac('sha256', base64_encode(''), $apiKey);
+
+3. References
+3.1. Network Codes
+
+Used wherever a `network` field is present:
+Code	Network
+TRX-TRC20	Tron TRC-20
+BSC-BEP20	BNB Smart Chain
+ETH-ERC20	Ethereum (ERC-20)
+AVAX-C	Avalanche C-Chain
+POL-MATIC	Polygon (Matic)
+TON	TON
+BTC	Bitcoin
+LTC	Litecoin
+DASH	Dash
+3.2. Currency-Network Mapping
+Currency	Allowed networks
+USDT	TRX-TRC20, BSC-BEP20, ETH-ERC20, AVAX-C, POL-MATIC, TON
+USDC	BSC-BEP20, ETH-ERC20, AVAX-C, POL-MATIC
+BTC	BTC
+ETH	ETH-ERC20
+BNB	BSC-BEP20
+TRX	TRX-TRC20
+LTC	LTC
+DASH	DASH
+TON	TON
+AVAX	AVAX-C
+POL	POL-MATIC
+3.3. Payment Statuses
+
+The `payment_status` field in API responses and webhooks:
+Status	Description
+pending	Created, awaiting initialization
+check	Awaiting payment from customer
+paid	✅ Paid successfully
+underpaid_check	⚠️ Underpaid (can top up)
+underpaid	⚠️ Underpaid
+overpaid	✅ Overpaid (credited)
+cancel	❌ Cancelled / expired
+aml_lock	Transaction blocked due to AML
+4. Payment API
+4.1. Create Payment
+POST
+/v1/payment
+
+Creates a payment session and returns a URL for the customer to pay.
+Parameters
+Field	Type	Req.	Description
+amount	decimal	yes	Payment amount, >= 0.01
+currency	string	yes	Fiat currency (USD, EUR, RUB, etc.)
+order_id	string	yes	Your order ID (up to 128 chars)
+to_currency	string	no	Preselected cryptocurrency (USDT, BTC, ETH, etc.)
+network	string	no*	Network code (required if to_currency is set)
+url_return	string	no	Redirect URL after payment
+url_success	string	no	Alternative to url_return
+url_callback	string	no	URL for webhook notifications
+invite_code	string	no	Referrer code
+Request example
+
+{
+  "amount": "100.00",
+  "currency": "USD",
+  "order_id": "ORDER-12345",
+  "to_currency": "USDT",
+  "network": "TRX-TRC20",
+  "url_return": "https://your-site.com/success",
+  "url_callback": "https://your-site.com/webhook"
+}
+
+Response example
+
+{
+  "state": 0,
+  "result": {
+    "uuid": "abc123-def456-...",
+    "order_id": "ORDER-12345",
+    "amount": "100.00",
+    "currency": "USD",
+    "amount_usd": "100.00",
+    "exchange_rate": null,
+    "url": "https://2328.io/pay/abc123-def456-...",
+    "expires_at": "2026-01-11T21:00:00Z",
+    "created_at": "2026-01-11T20:00:00Z",
+    "payer_currency": "USDT",
+    "payer_amount": "100.50",
+    "network": "TRX-TRC20",
+    "address": "TXYZabc123...",
+    "payment_status": "check",
+    "txid": null,
+    "payment_amount": null,
+    "qr": "data:image/png;base64,iVBORw0..."
+  }
+}
+
+Redirect the customer to `result.url` for payment.
+
+`qr` — Base64-encoded QR code image containing the deposit address (data URI). Present only when `network` and `to_currency` are provided (i.e., the deposit address is already assigned). Otherwise `null`.
+4.2. Payment Info
+POST
+/v1/payment/info
+
+Get the current payment status by uuid or order_id.
+Parameters
+Field	Type	Req.	Description
+uuid	string	yes*	Payment UUID (from result.uuid on creation)
+order_id	string	yes*	Your order ID
+Request example
+
+{
+  "uuid": "abc123-def456-..."
+}
+
+Response example
+
+{
+  "state": 0,
+  "result": {
+    "uuid": "abc123-def456-...",
+    "order_id": "ORDER-12345",
+    "amount": "100.00",
+    "currency": "USD",
+    "amount_usd": "100.00",
+    "exchange_rate": null,
+    "url": "https://2328.io/pay/abc123-def456-...",
+    "expires_at": "2026-01-11T21:00:00Z",
+    "created_at": "2026-01-11T20:00:00Z",
+    "payer_currency": "USDT",
+    "payer_amount": "100.50",
+    "network": "TRX-TRC20",
+    "address": "TXYZabc123...",
+    "payment_status": "paid",
+    "txid": "0xabc123def456...",
+    "payment_amount": "100.50",
+    "qr": "data:image/png;base64,iVBORw0..."
+  }
+}
+
+* At least one of the two fields is required
+
+`qr` — Base64-encoded QR code image containing the deposit address (data URI). Present only when the invoice has an assigned address (`network` and `to_currency` were set). Otherwise `null`.
+4.3. Payment List
+POST
+/v1/payment/list
+
+Get a list of all payments with filtering and pagination.
+Parameters
+Field	Type	Req.	Description
+status	string	no	Filter by status (see 3.3)
+date_from	date	no	Start date (YYYY-MM-DD)
+date_to	date	no	End date (YYYY-MM-DD)
+page	int	no	Page number (default: 1)
+per_page	int	no	Items per page (default: 15, max: 5000)
+Request example
+
+{
+  "status": "paid",
+  "date_from": "2026-01-01",
+  "date_to": "2026-01-31",
+  "page": 1,
+  "per_page": 15
+}
+
+Response example
+
+{
+  "state": 0,
+  "result": {
+    "items": [
+      {
+        "uuid": "abc123-def456-...",
+        "order_id": "ORDER-12345",
+        "amount": "100.00",
+        "currency": "USD",
+        "payment_status": "paid",
+        "txid": "0xabc123def456...",
+        "payment_amount": "100.50"
+      }
+    ],
+    "paginate": {
+      "count": 1,
+      "current_page": 1,
+      "per_page": 15,
+      "total": 1,
+      "total_pages": 1,
+      "has_more": false
+    }
+  }
+}
+
+<?php
+$project = 'YOUR_PROJECT_UUID';
+$apiKey  = 'YOUR_API_KEY';
+
+function apiSign(array $data, string $apiKey): string {
+    $json = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $base64 = base64_encode($json);
+    return hash_hmac('sha256', $base64, $apiKey);
+}
+
+$data = [
+    "amount" => "100.00",
+    "currency" => "USD",
+    "order_id" => "ORDER-12345",
+    "to_currency" => "USDT",
+    "network" => "TRX-TRC20",
+    "url_callback" => "https://your-site.com/webhook",
+];
+
+$sign = apiSign($data, $apiKey);
+
+$ch = curl_init('https://api.2328.io/api/v1/payment');
+curl_setopt_array($ch, [
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_POST => true,
+    CURLOPT_POSTFIELDS => json_encode($data),
+    CURLOPT_HTTPHEADER => [
+        "Content-Type: application/json",
+        "project: $project",
+        "sign: $sign",
+    ],
+]);
+
+$res = curl_exec($ch);
+$response = json_decode($res, true);
+
+if (($response['state'] ?? 1) === 0) {
+    header("Location: ".$response['result']['url']);
+    exit;
+}
+?>
+
+5. Webhook Notifications
+
+The system sends a webhook to `url_callback` when a payment status changes.
+Request Format
+
+- Method: POST
+
+- Content-Type: application/json
+
+- Signature: sign field in the request body
+
+{
+  "uuid": "abc123-def456-...",
+  "order_id": "ORDER-12345",
+  "amount": "100.00",
+  "currency": "USD",
+  "amount_usd": "100.00",
+  "exchange_rate": null,
+  "url": "https://2328.io/pay/abc123-def456-...",
+  "expires_at": "2026-01-11T21:00:00Z",
+  "created_at": "2026-01-11T20:00:00Z",
+  "payer_currency": "USDT",
+  "payer_amount": "100.50",
+  "network": "TRX-TRC20",
+  "address": "TXYZabc123...",
+  "payment_status": "paid",
+  "txid": "0xabc123def456...",
+  "payment_amount": "100.50",
+  "sign": "a1b2c3d4e5f6..."
+}
+
+Important: The webhook structure is identical to the /v1/payment/info response, plus a sign field for authentication.
+Verify Webhook Signature
+
+1. Extract the sign field from webhook data.
+
+2. Remove the sign field from the array.
+
+3. Encode remaining fields as JSON.
+
+4. Encode JSON in Base64.
+
+5. Compute HMAC-SHA256 from Base64 using API_KEY.
+
+6. Compare the computed signature with sign from the webhook.
+
+<?php
+function verifyWebhookSign(array $data, string $apiKey): bool {
+    $receivedSign = $data['sign'] ?? '';
+    unset($data['sign']);
+
+    $json = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $base64 = base64_encode($json);
+    $calculatedSign = hash_hmac('sha256', $base64, $apiKey);
+
+    return hash_equals($calculatedSign, $receivedSign);
+}
+
+$apiKey = 'YOUR_API_KEY';
+$webhookData = json_decode(file_get_contents('php://input'), true);
+
+if (!verifyWebhookSign($webhookData, $apiKey)) {
+    http_response_code(401);
+    echo json_encode(['error' => 'Invalid signature']);
+    exit;
+}
+
+$orderId = $webhookData['order_id'];
+$status = $webhookData['payment_status'];
+
+switch ($status) {
+    case 'paid':
+    case 'overpaid':
+        break;
+    case 'underpaid_check':
+        break;
+    case 'underpaid':
+        break;
+    case 'cancel':
+        break;
+}
+
+http_response_code(200);
+echo json_encode(['success' => true]);
+?>
+
+Important
+
+Best Practices:
+
+- Idempotency: Always check if the payment has already been processed (by order_id).
+
+- Async: Webhooks may arrive multiple times. Handle them idempotently.
+
+- Fast response: Return HTTP 200 as quickly as possible.
+
+- Retries: If we don't receive HTTP 200, the webhook is resent after 2 minutes. Maximum 5 retry attempts.
+
+- Security: ALWAYS verify the sign signature before processing.
+6. Payout API (Withdrawals)
+Important
+
+Payout API Key: For all Payout endpoints, you must use a separate Payout API key to generate the sign signature. This key is different from your regular API key. You can generate a Payout API key in your project settings in the dashboard.
+6.1. Create Payout
+POST
+/v1/payout
+
+Creates a withdrawal request from the merchant balance.
+Parameters
+Field	Type	Req.	Description
+currency	string	yes	Withdrawal currency (see 3.2)
+network	string	yes	Network code (see 3.1)
+amount	string	yes	Withdrawal amount
+to_address	string	yes	Recipient blockchain address
+from_currency	string	no	Pass "USDT" to convert and withdraw from USDT balance. If set, the system checks the USDT balance, converts the required amount to the target currency, and sends the payout. Works for all supported currencies. Pass null or omit if not needed.
+Request example
+
+{
+  "currency": "USDT",
+  "network": "BSC-BEP20",
+  "amount": "50",
+  "to_address": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb0"
+}
+
+Response example
+
+{
+  "state": 0,
+  "result": {
+    "uuid": "019b2265-34d8-7001-a230-8f97de90d481",
+    "status": "approved",
+    "currency": "USDT",
+    "network": "BSC-BEP20",
+    "amount": "50.00",
+    "to_address": "0x742d35Cc...",
+    "message": "Withdrawal approved and processing."
+  }
+}
+
+Fees: Network and platform fees are deducted from the withdrawal amount.
+6.2. Payout Status
+GET
+/v1/payout/status/{uuid}
+
+Get the status of a payout request.
+Parameters
+Field	Type	Req.	Description
+uuid	string	yes	Payout UUID (from result.uuid on creation)
+Response example
+
+{
+  "state": 0,
+  "result": {
+    "uuid": "019b2265-34d8-7001-a230-8f97de90d481",
+    "status": "completed",
+    "currency": "USDT",
+    "network": "BSC-BEP20",
+    "amount": "50.00",
+    "to_address": "0x742d35Cc...",
+    "tx_hash": "0xabc123def456...",
+    "created_at": "2026-01-11T20:00:00Z",
+    "completed_at": "2026-01-11T20:05:00Z"
+  }
+}
+
+Signature is computed from empty body: `hash_hmac('sha256', base64_encode(''), $apiKey)`
+6.3. Payout Statuses
+Status	Description
+pending	Created, awaiting review
+approved	Approved, processing
+processing	Being sent to blockchain
+awaiting_confirmation	Awaiting blockchain confirmations
+completed	✅ Completed successfully
+failed	❌ Sending error
+rejected	❌ Rejected
+
+<?php
+$project = 'YOUR_PROJECT_UUID';
+$apiKey = 'YOUR_API_KEY';
+
+$data = [
+    'currency' => 'USDT',
+    'network' => 'BSC-BEP20',
+    'amount' => '50',
+    'to_address' => '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb0',
+];
+
+$sign = apiSign($data, $apiKey);
+
+$ch = curl_init('https://api.2328.io/api/v1/payout');
+curl_setopt_array($ch, [
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_POST => true,
+    CURLOPT_POSTFIELDS => json_encode($data),
+    CURLOPT_HTTPHEADER => [
+        'Content-Type: application/json',
+        'project: ' . $project,
+        'sign: ' . $sign,
+    ],
+]);
+
+$response = curl_exec($ch);
+$result = json_decode($response, true);
+
+if ($result['state'] === 0) {
+    $withdrawalUuid = $result['result']['uuid'];
+    $signGet = hash_hmac('sha256', base64_encode(''), $apiKey);
+    $ch = curl_init('https://api.2328.io/api/v1/payout/status/' . $withdrawalUuid);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER => [
+            'Content-Type: application/json',
+            'project: ' . $project,
+            'sign: ' . $signGet,
+        ],
+    ]);
+    $statusResponse = curl_exec($ch);
+    echo "Status: " . json_decode($statusResponse, true)['result']['status'];
+}
+?>
+
+7. Exchange Rates
+
+Public endpoint for getting current exchange rates. **No auth required** — does not require `project` and `sign` headers.
+Get Exchange Rates
+GET
+/v1/exchange-rates
+
+Returns a matrix of exchange rates between all currencies: fiat (USD, EUR, RUB, etc.), crypto (BTC, ETH, USDT, etc.).
+Response example
+
+{
+  "state": 0,
+  "result": {
+    "USD": {
+      "USD": "1.00000000",
+      "EUR": "0.86090000",
+      "RUB": "78.32190000",
+      "BTC": "0.00001055",
+      "USDT": "1.00000000"
+    },
+    "BTC": {
+      "USD": "94786.69000000",
+      "EUR": "81589.12000000",
+      "ETH": "29.02345678",
+      "USDT": "94786.69000000"
+    }
+  }
+}
+
+`result[FROM][TO]` — Exchange rate for 1 unit of FROM to TO
+
+`result["USD"]["RUB"]` = 78.32 → 1 USD = 78.32 RUB
+
+`result["BTC"]["USD"]` = 94786.69 → 1 BTC = $94,786.69
+
+<?php
+$ch = curl_init('https://api.2328.io/api/v1/exchange-rates');
+curl_setopt_array($ch, [ CURLOPT_RETURNTRANSFER => true ]);
+
+$response = json_decode(curl_exec($ch), true);
+
+if ($response['state'] === 0) {
+    $rates = $response['result'];
+    $rubAmount = bcmul(100, $rates['USD']['RUB'], 2);
+    echo "100 USD = {$rubAmount} RUB\n";
+}
+?>
+
+8. Static Wallets
+
+Static wallets are permanent addresses for receiving payments, linked to a specific `order_id`. Unique by combination of `project_id + order_id + currency + network`.
+8.1. Create Static Wallet
+POST
+/v1/static-wallet
+
+Creates a static wallet for recurring or long-term payments.
+Parameters
+Field	Type	Req.	Description
+currency	string	yes	Cryptocurrency (USDT, BTC, ETH, etc.)
+network	string	yes	Network code (see 3.1)
+order_id	string	yes	Your order/user ID (up to 255 chars)
+label	string	no	Wallet label (up to 255 chars)
+url_callback	string	yes	URL for webhook notifications
+invite_code	string	no	Referrer code
+Request example
+
+{
+  "currency": "USDT",
+  "network": "TRX-TRC20",
+  "order_id": "USER-123",
+  "label": "User deposit #123",
+  "url_callback": "https://your-site.com/webhook/static"
+}
+
+Response example
+
+{
+  "state": 0,
+  "result": {
+    "uuid": "019b2265-34d8-7001-a230-8f97de90d481",
+    "address": "TXYZabc123...",
+    "currency": "USDT",
+    "network": "TRX-TRC20",
+    "label": "User deposit #123",
+    "order_id": "USER-123",
+    "url_callback": "https://your-site.com/webhook/static",
+    "status": "active",
+    "url": "https://go.2328.io/static/019b2265-34d8-7001-a230-8f97de90d481",
+    "created_at": "2026-01-20T12:00:00Z",
+    "qr": "data:image/png;base64,iVBORw0..."
+  }
+}
+
+`qr` — Base64-encoded QR code image containing the deposit address (data URI). Always present for static wallets, as the address is assigned immediately upon creation.
+
+<?php
+$project = 'YOUR_PROJECT_UUID';
+$apiKey  = 'YOUR_API_KEY';
+
+function apiSign(array $data, string $apiKey): string {
+    $json = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $base64 = base64_encode($json);
+    return hash_hmac('sha256', $base64, $apiKey);
+}
+
+$data = [
+    'currency' => 'USDT',
+    'network' => 'TRX-TRC20',
+    'order_id' => 'USER-123',
+    'label' => 'User deposit #123',
+    'url_callback' => 'https://your-site.com/webhook/static',
+];
+
+$sign = apiSign($data, $apiKey);
+
+$ch = curl_init('https://api.2328.io/api/v1/static-wallet');
+curl_setopt_array($ch, [
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_POST => true,
+    CURLOPT_POSTFIELDS => json_encode($data),
+    CURLOPT_HTTPHEADER => [
+        'Content-Type: application/json',
+        'project: ' . $project,
+        'sign: ' . $sign,
+    ],
+]);
+
+$response = curl_exec($ch);
+$result = json_decode($response, true);
+
+if ($result['state'] === 0) {
+    $staticWallet = $result['result'];
+    echo "Deposit address: " . $staticWallet['address'];
+    echo "\nOr QR: " . $staticWallet['url'];
+}
+?>
+
+8.3. Wallet Info
+POST
+/v1/static-wallet/info
+
+Get static wallet information by uuid or address.
+Parameters
+Field	Type	Req.	Description
+uuid	string	yes*	Static wallet UUID
+address	string	yes*	Blockchain wallet address
+Request example
+
+{
+  "uuid": "019b2265-34d8-7001-a230-8f97de90d481"
+}
+
+Response example
+
+{
+  "state": 0,
+  "result": {
+    "uuid": "019b2265-34d8-7001-a230-8f97de90d481",
+    "address": "TXYZabc123...",
+    "currency": "USDT",
+    "network": "TRX-TRC20",
+    "status": "active",
+    "total_received": "1250.50",
+    "transactions_count": 3,
+    "created_at": "2026-01-20T12:00:00Z",
+    "qr": "data:image/png;base64,iVBORw0..."
+  }
+}
+
+* At least one of the two fields is required
+
+`qr` — Base64-encoded QR code image containing the deposit address (data URI). Always present for static wallets.
+8.4. Wallet List
+POST
+/v1/static-wallet/list
+
+Get a list of all static wallets with filtering and pagination.
+Parameters
+Field	Type	Req.	Description
+status	string	no	Filter by status (active, inactive)
+currency	string	no	Filter by currency
+network	string	no	Filter by network
+order_id	string	no	Filter by order_id
+page	int	no	Page number (default: 1)
+per_page	int	no	Items per page (default: 20, max: 100)
+Request example
+
+{
+  "status": "active",
+  "currency": "USDT",
+  "page": 1,
+  "per_page": 20
+}
+
+Response example
+
+{
+  "state": 0,
+  "result": {
+    "items": [
+      {
+        "uuid": "019b2265-...",
+        "address": "TXYZabc123...",
+        "currency": "USDT",
+        "network": "TRX-TRC20",
+        "status": "active",
+        "total_received": "1250.50",
+        "transactions_count": 3
+      }
+    ],
+    "paginate": {
+      "count": 1,
+      "current_page": 1,
+      "per_page": 20,
+      "total": 1,
+      "total_pages": 1,
+      "has_more": false
+    }
+  }
+}
+
+8.5. Disable Wallet
+POST
+/v1/static-wallet/disable
+
+Disable a static wallet (stop receiving payments).
+Request example
+
+{
+  "uuid": "019b2265-34d8-7001-a230-8f97de90d481"
+}
+
+Response example
+
+{
+  "state": 0,
+  "result": {
+    "uuid": "019b2265-34d8-7001-a230-8f97de90d481",
+    "status": "inactive",
+    "message": "Static wallet disabled successfully"
+  }
+}
+
+8.6. Enable Wallet
+POST
+/v1/static-wallet/enable
+
+Enable a previously disabled static wallet.
+Request example
+
+{
+  "uuid": "019b2265-34d8-7001-a230-8f97de90d481"
+}
+
+Response example
+
+{
+  "state": 0,
+  "result": {
+    "uuid": "019b2265-34d8-7001-a230-8f97de90d481",
+    "status": "active",
+    "message": "Static wallet enabled successfully"
+  }
+}
+
+8.7. Wallet Transactions
+POST
+/v1/static-wallet/transactions
+
+Get a list of all deposits received by a static wallet.
+Parameters
+Field	Type	Req.	Description
+uuid	string	yes	Static wallet UUID
+date_from	date	no	Start date (YYYY-MM-DD)
+date_to	date	no	End date (YYYY-MM-DD)
+page	int	no	Page number (default: 1)
+per_page	int	no	Items per page (default: 15, max: 5000)
+Request example
+
+{
+  "uuid": "019b2265-34d8-7001-a230-8f97de90d481",
+  "date_from": "2026-01-01",
+  "date_to": "2026-01-31",
+  "page": 1,
+  "per_page": 15
+}
+
+Response example
+
+{
+  "state": 0,
+  "result": {
+    "items": [
+      {
+        "uuid": "abc123-def456-...",
+        "order_id": "USER-123",
+        "amount": "100.00",
+        "currency": "USDT",
+        "payment_status": "paid",
+        "txid": "0xabc123def456...",
+        "fee_amount": "3.00",
+        "net_amount": "97.00",
+        "created_at": "2026-01-20T15:30:00Z"
+      }
+    ],
+    "paginate": {
+      "count": 1,
+      "hasPages": true,
+      "perPage": 15,
+      "page": 1
+    }
+  }
+}
+
+8.8. Webhook Notifications for Static Wallets
+
+When a payment is received on a static wallet, the system sends a webhook to url_callback.
+
+Important: The webhook format for static wallets differs from regular payment webhooks (section 5).
+
+{
+  "uuid": "abc123-def456-...",
+  "order_id": "USER-123",
+  "amount": "100.00",
+  "currency": "USDT",
+  "amount_usd": "100.00",
+  "payer_currency": "USDT",
+  "payer_amount": "100.00",
+  "network": "TRX-TRC20",
+  "address": "TXYZabc123...",
+  "payment_status": "paid",
+  "txid": "0xabc123def456...",
+  "payment_amount": "100.00",
+  "merchant_amount": "97.00",
+  "created_at": "2026-01-20T15:30:00Z",
+  "sign": "a1b2c3d4e5f6..."
+}
+
+Static Wallet Webhook Fields
+Field	Description
+uuid	Transaction (invoice) UUID
+order_id	Your static wallet order_id
+amount	Amount in USD
+currency	Wallet currency (USDT, BTC, etc.)
+merchant_amount	Amount after fee deduction
+payment_status	Payment status (always 'paid' for statics)
+txid	Blockchain transaction hash
+sign	HMAC-SHA256 signature for verification
+Important
+
+Recommendations:
+
+- Unique order_id: Use a unique order_id for each user/order.
+
+- Idempotency: Check txid before processing to avoid duplicates.
+
+- Security: ALWAYS verify the sign signature before crediting funds.
+
+- Fees: Use merchant_amount for crediting, not payment_amount.

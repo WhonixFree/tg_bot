@@ -121,6 +121,36 @@ async def handle_buy_subscription(callback: CallbackQuery, state: FSMContext) ->
     await callback.answer()
 
 
+@router.callback_query(F.data == "purchase:back_to_coin")
+async def handle_back_to_coin_selection(callback: CallbackQuery, state: FSMContext) -> None:
+    if callback.from_user is None or callback.message is None:
+        return
+
+    async with session_manager.session() as session:
+        services = build_runtime_services(session=session, bot=callback.bot)
+        user = await services.user_service.upsert_from_telegram(callback.from_user)
+
+        if await services.subscription_service.has_active_lifetime_access(user.id):
+            await _show_my_access(
+                services=services,
+                state=state,
+                user=user,
+                chat_id=callback.message.chat.id,
+                already_active=True,
+            )
+        else:
+            plan = await services.catalog_service.get_mvp_plan()
+            await _show_coin_selection(
+                services=services,
+                state=state,
+                user=user,
+                chat_id=callback.message.chat.id,
+                plan=plan,
+            )
+        await session.commit()
+    await callback.answer()
+
+
 @router.callback_query(F.data.startswith("coin:"))
 async def handle_coin_selection(callback: CallbackQuery, state: FSMContext) -> None:
     if callback.from_user is None or callback.message is None:
@@ -287,12 +317,10 @@ async def handle_invoice_cancel(callback: CallbackQuery, state: FSMContext) -> N
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("invoice:new:"))
+@router.callback_query(F.data == "invoice:new")
 async def handle_create_new_invoice(callback: CallbackQuery, state: FSMContext) -> None:
     if callback.from_user is None or callback.message is None:
         return
-
-    _, _, coin_code, network_code = callback.data.split(":", maxsplit=3)
 
     async with session_manager.session() as session:
         services = build_runtime_services(session=session, bot=callback.bot)
@@ -308,18 +336,12 @@ async def handle_create_new_invoice(callback: CallbackQuery, state: FSMContext) 
             )
         else:
             plan = await services.catalog_service.get_mvp_plan()
-            invoice = await services.payment_service.create_fresh_invoice_from_previous(
-                user_id=user.id,
-                plan=plan,
-                coin_code=coin_code,
-                network_code=network_code,
-            )
-            await _show_invoice(
+            await _show_coin_selection(
                 services=services,
                 state=state,
                 user=user,
                 chat_id=callback.message.chat.id,
-                invoice=invoice,
+                plan=plan,
             )
         await session.commit()
     await callback.answer()
@@ -418,6 +440,23 @@ async def _show_purchase_entry(
         )
         return
 
+    await _show_coin_selection(
+        services=services,
+        state=state,
+        user=user,
+        chat_id=chat_id,
+        plan=plan,
+    )
+
+
+async def _show_coin_selection(
+    *,
+    services: RuntimeServices,
+    state: FSMContext,
+    user: User,
+    chat_id: int,
+    plan: Plan,
+) -> None:
     await state.set_state(PurchaseStates.COIN_SELECTION)
     await state.set_data({})
     await services.message_service.show_text(
@@ -493,20 +532,12 @@ async def _show_expired_invoice(
     invoice: InvoiceView,
 ) -> None:
     await state.set_state(PurchaseStates.ACTIVE_INVOICE)
-    await state.set_data(
-        {
-            "coin_code": invoice.payer_currency,
-            "network_code": invoice.network,
-        }
-    )
+    await state.set_data({})
     await services.message_service.show_text(
         user_id=user.id,
         chat_id=chat_id,
         text=build_expired_invoice_text(invoice),
-        reply_markup=build_expired_invoice_keyboard(
-            coin_code=invoice.payer_currency,
-            network_code=invoice.network,
-        ),
+        reply_markup=build_expired_invoice_keyboard(),
         message_type=BotMessageType.INVOICE,
     )
 

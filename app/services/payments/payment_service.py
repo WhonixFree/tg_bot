@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from decimal import Decimal
 from uuid import uuid4
 
@@ -13,6 +13,7 @@ from app.services.catalog import CatalogService
 from app.services.payments.gateway import PaymentGateway
 from app.services.payments.status_processor import PaymentProcessingResult, PaymentStatusProcessor
 from app.services.payments.schemas import InvoiceView, PaymentCreateRequest, WebhookEvent
+from app.utils.datetime import normalize_sqlite_utc, utc_now_naive
 
 
 @dataclass(frozen=True)
@@ -107,7 +108,6 @@ class PaymentService:
             txid=gateway_result.txid,
             raw_payload_json=gateway_result.raw_payload_json,
         )
-        order.payments.append(payment)
         order.plan = plan
         return self._build_invoice_view(order, payment)
 
@@ -202,7 +202,7 @@ class PaymentService:
             address=payment.address or "",
             provider_url=payment.provider_url,
             qr_data_uri=payment.qr_data_uri,
-            expires_at=payment.expires_at or datetime.now(UTC),
+            expires_at=normalize_sqlite_utc(payment.expires_at) or utc_now_naive(),
             status=payment.provider_status,
         )
 
@@ -214,4 +214,5 @@ class PaymentService:
         )
 
     def _is_expired(self, payment: Payment) -> bool:
-        return payment.expires_at is not None and payment.expires_at <= datetime.now(UTC)
+        expires_at = normalize_sqlite_utc(payment.expires_at)
+        return expires_at is not None and expires_at <= utc_now_naive()

@@ -19,8 +19,13 @@ class Plan(TimestampMixin, Base):
     price_usd: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     access_type: Mapped[PlanAccessType] = mapped_column(
-        Enum(PlanAccessType, native_enum=False, validate_strings=True, name="plan_access_type"),
-        nullable=False,
+        Enum(
+            PlanAccessType,
+            native_enum=False,
+            validate_strings=True,
+            values_callable=lambda enum_cls: [item.value for item in enum_cls],
+            name="plan_access_type",
+        ),
     )
 
     subscriptions = relationship("Subscription", back_populates="plan")

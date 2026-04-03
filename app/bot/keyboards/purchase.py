@@ -52,6 +52,7 @@ def build_network_keyboard(coin_code: str, options: list[NetworkOption]) -> Inli
             rows.append(row)
         offset += row_size
 
+    rows.append([InlineKeyboardButton(text="Back to coin selection", callback_data="purchase:back_to_coin")])
     rows.append([InlineKeyboardButton(text="Main Menu", callback_data="menu:home")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -60,6 +61,7 @@ def build_summary_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="Create invoice", callback_data="summary:create_invoice")],
+            [InlineKeyboardButton(text="Back to coin selection", callback_data="purchase:back_to_coin")],
             [InlineKeyboardButton(text="Main Menu", callback_data="menu:home")],
         ]
     )
@@ -78,13 +80,13 @@ def build_invoice_keyboard(public_order_id: str) -> InlineKeyboardMarkup:
     )
 
 
-def build_expired_invoice_keyboard(coin_code: str, network_code: str) -> InlineKeyboardMarkup:
+def build_expired_invoice_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text="Create new invoice",
-                    callback_data=f"invoice:new:{coin_code}:{network_code}",
+                    callback_data="invoice:new",
                 )
             ],
             [InlineKeyboardButton(text="Main Menu", callback_data="menu:home")],
