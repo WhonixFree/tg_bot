@@ -43,6 +43,16 @@ class Settings(BaseSettings):
         default=DEFAULT_PAYMENT_WEBHOOK_PATH,
         alias="PAYMENT_WEBHOOK_PATH",
     )
+    rate_api_timeout_seconds: float = Field(default=5.0, alias="RATE_API_TIMEOUT_SECONDS")
+    rate_cache_ttl_seconds: int = Field(default=30, alias="RATE_CACHE_TTL_SECONDS")
+    coingecko_base_url: str = Field(
+        default="https://api.coingecko.com/api/v3",
+        alias="COINGECKO_BASE_URL",
+    )
+    binance_base_url: str = Field(
+        default="https://api.binance.com",
+        alias="BINANCE_BASE_URL",
+    )
     api_host: str = Field(default=DEFAULT_API_HOST, alias="API_HOST")
     api_port: int = Field(default=DEFAULT_API_PORT, alias="API_PORT")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")

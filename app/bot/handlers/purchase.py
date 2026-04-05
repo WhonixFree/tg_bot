@@ -11,6 +11,7 @@ from app.bot.keyboards.purchase import (
     build_main_menu_keyboard,
     build_my_access_keyboard,
     build_network_keyboard,
+    build_underpaid_keyboard,
     build_success_keyboard,
     build_summary_keyboard,
 )
@@ -25,12 +26,14 @@ from app.bot.screens.purchase import (
     build_no_access_text,
     build_payment_success_with_access_text,
     build_summary_text,
+    build_underpaid_invoice_text,
 )
 from app.bot.states import PurchaseStates
 from app.core.enums import BotMessageType, PaymentStatus
-from app.db.models import Plan, User
+from app.db.models import User
 from app.db.session import session_manager
 from app.services.payments.payment_service import PurchaseEntry
+from app.services.product import FixedProduct
 from app.services.payments.schemas import InvoiceView
 from app.services.runtime import RuntimeServices, build_runtime_services
 
@@ -91,7 +94,7 @@ async def handle_my_access(callback: CallbackQuery, state: FSMContext) -> None:
 
 
 @router.callback_query(F.data == "menu:buy")
-async def handle_buy_subscription(callback: CallbackQuery, state: FSMContext) -> None:
+async def handle_buy_access(callback: CallbackQuery, state: FSMContext) -> None:
     if callback.from_user is None or callback.message is None:
         return
 
@@ -107,14 +110,12 @@ async def handle_buy_subscription(callback: CallbackQuery, state: FSMContext) ->
                 already_active=True,
             )
         else:
-            plan = await services.catalog_service.get_mvp_plan()
-            entry = await services.payment_service.get_purchase_entry(user_id=user.id, plan=plan)
+            entry = await services.payment_service.get_purchase_entry(user_id=user.id)
             await _show_purchase_entry(
                 services=services,
                 state=state,
                 user=user,
                 chat_id=callback.message.chat.id,
-                plan=plan,
                 entry=entry,
             )
         await session.commit()
@@ -139,13 +140,11 @@ async def handle_back_to_coin_selection(callback: CallbackQuery, state: FSMConte
                 already_active=True,
             )
         else:
-            plan = await services.catalog_service.get_mvp_plan()
             await _show_coin_selection(
                 services=services,
                 state=state,
                 user=user,
                 chat_id=callback.message.chat.id,
-                plan=plan,
             )
         await session.commit()
     await callback.answer()
@@ -171,27 +170,27 @@ async def handle_coin_selection(callback: CallbackQuery, state: FSMContext) -> N
                 already_active=True,
             )
         else:
-            plan = await services.catalog_service.get_mvp_plan()
-            if services.catalog_service.needs_network_selection(coin_code):
+            product = await services.product_service.get_product()
+            if services.product_service.needs_network_selection(coin_code):
                 await state.set_state(PurchaseStates.NETWORK_SELECTION)
                 await state.update_data(coin_code=coin_code)
                 await services.message_service.show_text(
                     user_id=user.id,
                     chat_id=callback.message.chat.id,
-                    text=build_network_selection_text(plan, coin_code),
+                    text=build_network_selection_text(product.price_usd, coin_code),
                     reply_markup=build_network_keyboard(
                         coin_code,
-                        services.catalog_service.get_networks_for_coin(coin_code),
+                        services.product_service.get_networks_for_coin(coin_code),
                     ),
                 )
             else:
-                network_code = services.catalog_service.get_default_network(coin_code)
+                network_code = services.product_service.get_default_network(coin_code)
                 await _show_summary(
                     services=services,
                     state=state,
                     user=user,
                     chat_id=callback.message.chat.id,
-                    plan=plan,
+                    product=product,
                     coin_code=coin_code,
                     network_code=network_code,
                 )
@@ -220,13 +219,13 @@ async def handle_network_selection(callback: CallbackQuery, state: FSMContext) -
                 already_active=True,
             )
         else:
-            plan = await services.catalog_service.get_mvp_plan()
+            product = await services.product_service.get_product()
             await _show_summary(
                 services=services,
                 state=state,
                 user=user,
                 chat_id=callback.message.chat.id,
-                plan=plan,
+                product=product,
                 coin_code=coin_code,
                 network_code=network_code,
             )
@@ -259,10 +258,8 @@ async def handle_create_invoice(callback: CallbackQuery, state: FSMContext) -> N
                 already_active=True,
             )
         else:
-            plan = await services.catalog_service.get_mvp_plan()
             invoice = await services.payment_service.create_invoice(
                 user_id=user.id,
-                plan=plan,
                 coin_code=coin_code,
                 network_code=network_code,
             )
@@ -335,13 +332,11 @@ async def handle_create_new_invoice(callback: CallbackQuery, state: FSMContext) 
                 already_active=True,
             )
         else:
-            plan = await services.catalog_service.get_mvp_plan()
             await _show_coin_selection(
                 services=services,
                 state=state,
                 user=user,
                 chat_id=callback.message.chat.id,
-                plan=plan,
             )
         await session.commit()
     await callback.answer()
@@ -417,7 +412,6 @@ async def _show_purchase_entry(
     state: FSMContext,
     user: User,
     chat_id: int,
-    plan: Plan,
     entry: PurchaseEntry,
 ) -> None:
     if entry.active_invoice is not None:
@@ -445,7 +439,6 @@ async def _show_purchase_entry(
         state=state,
         user=user,
         chat_id=chat_id,
-        plan=plan,
     )
 
 
@@ -455,14 +448,14 @@ async def _show_coin_selection(
     state: FSMContext,
     user: User,
     chat_id: int,
-    plan: Plan,
 ) -> None:
+    product = await services.product_service.get_product()
     await state.set_state(PurchaseStates.COIN_SELECTION)
     await state.set_data({})
     await services.message_service.show_text(
         user_id=user.id,
         chat_id=chat_id,
-        text=build_coin_selection_text(plan),
+        text=build_coin_selection_text(product.price_usd),
         reply_markup=build_coin_keyboard(),
     )
 
@@ -473,7 +466,7 @@ async def _show_summary(
     state: FSMContext,
     user: User,
     chat_id: int,
-    plan: Plan,
+    product: FixedProduct,
     coin_code: str,
     network_code: str,
 ) -> None:
@@ -483,10 +476,9 @@ async def _show_summary(
         user_id=user.id,
         chat_id=chat_id,
         text=build_summary_text(
-            plan=plan,
+            price_usd=product.price_usd,
             coin_code=coin_code,
-            network_code=network_code,
-            catalog_service=services.catalog_service,
+            network_label=services.product_service.get_network_label(network_code),
         ),
         reply_markup=build_summary_keyboard(),
     )
@@ -562,6 +554,24 @@ async def _show_payment_success(
     )
 
 
+async def _show_underpaid_invoice(
+    *,
+    services: RuntimeServices,
+    state: FSMContext,
+    user: User,
+    chat_id: int,
+) -> None:
+    await state.set_state(PurchaseStates.ACTIVE_INVOICE)
+    await state.set_data({})
+    await services.message_service.show_text(
+        user_id=user.id,
+        chat_id=chat_id,
+        text=build_underpaid_invoice_text(),
+        reply_markup=build_underpaid_keyboard(),
+        message_type=BotMessageType.INVOICE,
+    )
+
+
 async def _handle_invoice_status_action(
     *,
     callback: CallbackQuery,
@@ -590,6 +600,13 @@ async def _handle_invoice_status_action(
                 chat_id=callback.message.chat.id,
                 invoice=invoice,
                 invite_link=processing.access_link.invite_link,
+            )
+        elif invoice.status in {PaymentStatus.UNDERPAID, PaymentStatus.UNDERPAID_CHECK}:
+            await _show_underpaid_invoice(
+                services=services,
+                state=state,
+                user=user,
+                chat_id=callback.message.chat.id,
             )
         elif invoice.status == PaymentStatus.CANCEL:
             await _show_expired_invoice(

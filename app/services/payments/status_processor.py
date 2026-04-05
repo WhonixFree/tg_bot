@@ -4,12 +4,16 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from app.core.enums import OrderStatus, PaymentStatus
+from app.core.logging import get_logger
 from app.db.models import AccessLink, Order, Payment, Subscription
 from app.db.repositories.order import OrderRepository
 from app.db.repositories.payment import PaymentRepository
 from app.services.access.access_service import AccessService
 from app.services.payments.schemas import PaymentGatewayResult
 from app.services.subscriptions.subscription_service import SubscriptionService
+
+
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -45,12 +49,22 @@ class PaymentStatusProcessor:
         payment: Payment,
         result: PaymentGatewayResult,
     ) -> PaymentProcessingResult:
+        previous_order_status = order.status
+        previous_payment_status = payment.provider_status
         current_success = order.status == OrderStatus.PAID or payment.provider_status in {
             PaymentStatus.PAID,
             PaymentStatus.OVERPAID,
         }
 
         if current_success and result.provider_status not in {PaymentStatus.PAID, PaymentStatus.OVERPAID}:
+            logger.info(
+                "Webhook status transition skipped order_id=%s provider_uuid=%s previous_order_status=%s previous_payment_status=%s incoming_status=%s",
+                order.order_id,
+                payment.provider_payment_uuid,
+                previous_order_status,
+                previous_payment_status,
+                result.provider_status,
+            )
             subscription = await self._subscription_service.ensure_lifetime_subscription(
                 user_id=order.user_id,
                 plan_id=order.plan_id,
@@ -100,6 +114,17 @@ class PaymentStatusProcessor:
             await self._order_repository.update_status(order, OrderStatus.AWAITING_PAYMENT)
 
         await self._payment_repository.save(payment)
+        status_changed = previous_order_status != order.status or previous_payment_status != payment.provider_status
+        logger.info(
+            "Webhook status transition %s order_id=%s provider_uuid=%s previous_order_status=%s new_order_status=%s previous_payment_status=%s new_payment_status=%s",
+            "applied" if status_changed else "skipped",
+            order.order_id,
+            payment.provider_payment_uuid,
+            previous_order_status,
+            order.status,
+            previous_payment_status,
+            payment.provider_status,
+        )
         return PaymentProcessingResult(
             order=order,
             payment=payment,

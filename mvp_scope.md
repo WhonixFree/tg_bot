@@ -1,25 +1,28 @@
-# MVP Scope — Telegram Subscription Bot
+# MVP Scope — Telegram Channel Access Bot
 
 ## 1. Goal of MVP
 
 Build the smallest production-usable version of the Telegram bot that:
 - sells access to one private Telegram channel;
-- prepares full 2328.io payment integration for later activation;
-- can already run end-to-end in **mock payment mode** before the 2328 project is approved;
-- activates access automatically after payment;
+- accepts crypto payments via 2328.io;
+- optionally stores auxiliary BTC/ETH market-rate metadata from external free market price APIs;
+- activates access automatically after successful payment;
 - keeps user chat clean with one current bot screen;
 - provides a simple admin panel inside the bot.
 
 ## 2. What MUST be in MVP
 
 ### 2.1 Product scope
-MVP must implement only **Tier_1**.
+MVP must implement only one product:
+- **GUIDE_ACCESS_LIFETIME**
 
-Tier_1 means:
-- user gets access to one private guide channel;
-- Tier_1 is a one-time lifetime purchase;
-- after payment, user gets lifetime access to the guide channel;
-- no recurring billing.
+This means:
+- user gets lifetime access to one private guide channel;
+- payment is a one-time purchase;
+- there is no recurring billing;
+- there are no duration variants;
+- there are no multiple tariff plans;
+- there is no post-payment extension logic.
 
 ### 2.2 Supported payment assets
 MVP must support:
@@ -34,10 +37,28 @@ Supported networks:
 - BTC: BTC
 - ETH: ERC20
 
-### 2.3 User screens
+### 2.3 Invoice amount calculation rules
+The product price is stored in **USD** as the canonical price.
+
+Invoice creation rules:
+- the canonical product price is stored in USD and that USD amount is sent to 2328 for invoice creation;
+- `payer_amount` is the provider-returned crypto amount payable for the created invoice;
+- for BTC and ETH, external market-rate fetching is auxiliary preview/validation/audit logic only unless the provider contract explicitly requires fixed crypto amount input;
+- once the invoice is created, the provider-returned payable amount must be treated as locked and must not be recalculated on refresh or payment recheck.
+
+Rate-source rules:
+- use a free public market-data API as the primary source;
+- use a second free public market-data API as fallback;
+- if both sources fail, local preview/audit rate data may be absent, but invoice creation from the canonical USD amount may still proceed.
+
+Suggested sources for implementation:
+- CoinGecko Simple Price API as primary source, which documents price lookup by coin id and vs currency; citeturn308066search0turn308066search4
+- Binance Spot Market Data endpoint `GET /api/v3/ticker/price` as fallback, which is documented as public market data with no authentication required. citeturn308066search1turn308066search3
+
+### 2.4 User screens
 MVP must include these screens:
 - Main Menu
-- Choose Tier
+- Offer / Product Confirmation
 - Choose Coin
 - Choose Network (only where needed)
 - Order Summary
@@ -47,7 +68,13 @@ MVP must include these screens:
 - Payment Success / Access message
 - My Access
 
-### 2.4 Admin scope
+MVP must not include:
+- Choose Tier
+- Choose Duration
+- Expiring Soon
+- Subscription Expired
+
+### 2.5 Admin scope
 MVP admin panel must include:
 - open admin panel
 - list recent users
@@ -56,45 +83,52 @@ MVP admin panel must include:
 - revoke access
 - resend access link
 - grant access without payment
+- view payment and access state
 
-### 2.5 Payment integration
-MVP must implement the **full 2328 integration surface in code**, but real outbound API calls must stay disabled by default until the merchant project is approved on the 2328 side.
+MVP admin panel must not include:
+- manual extension by 1 / 3 / 6 / 12 months
+- duration management
+- plan management
 
+### 2.6 Payment integration
 MVP must implement:
-- request/response schemas for `POST /v1/payment`
-- request/response schemas for `POST /v1/payment/info`
-- signature generation for authenticated requests
-- webhook payload schema and signature verification
-- idempotent processing logic
-- provider abstraction that supports both `mock` and `live` modes
-- mock payment provider flow that mimics 2328 invoice creation and status progression
+- create invoice via `POST /v1/payment`
+- status check via `POST /v1/payment/info`
+- webhook processing from `url_callback`
+- 2328 signature verification
+- idempotent processing
+- optional pre-invoice BTC/ETH rate fetch for preview/validation/audit metadata
+- rate-source fallback logic
+- storing rate metadata together with the invoice/payment record
 
-Important rule:
-- **all 2328 API calls must be coded, but not executed in MVP by default**
-- default runtime mode must be `mock`
-- switching to real 2328 calls later must require only config changes and real credentials/project approval, not architecture changes
-
-### 2.6 Access automation
+### 2.7 Access automation
 MVP must implement:
 - create join-request invite links
 - approve join requests only for the correct Telegram account
 - decline join requests from another account
 - send admin notification on wrong-account access attempt
-- keep the access link attached to the user/subscription
-- allow admin-driven access revocation later
+- keep access active after successful payment unless manually revoked by admin
 
-### 2.7 Jobs/automation
-MVP must implement background processing only where needed for invoice/payment flow.
-Do not implement subscription expiry reminders or time-based channel removal in the lifetime-only MVP.
+MVP must not implement:
+- automatic expiration-based channel removal
+- renewal-based access extension rules
+- timed access periods
 
-### 2.8 Infrastructure
+### 2.8 Jobs/automation
+MVP must implement background processing for:
+- invoice expiration detection
+
+MVP must not implement background processing for:
+- 1-day subscription reminder
+- subscription expiration
+- channel removal on expiration
+
+### 2.9 Infrastructure
 MVP must run as one Dockerized app container with:
 - Telegram long polling
 - FastAPI webhook endpoint for 2328
 - SQLite as persistent DB
 - environment variable configuration
-
-The project must remain deployable as a single independent bot instance.
 
 ## 3. UX Rules That MUST Be Followed
 
@@ -106,10 +140,15 @@ Each new screen should delete the previous bot message and send a new one.
 - main menu must include an image
 - free channel link is shown in message text, not as button
 - manager contact is shown in message text, not as button
-- regular user sees only `Buy subscription` or `My access`
+- regular user sees only `Buy access` or `My access`
 - admin sees only `Admin panel`
 
-### 3.3 Invoice message rules
+### 3.3 Product selection rules
+The user flow must not expose multiple plans or durations.
+The product is fixed.
+The user only confirms purchase, then selects payment asset and network.
+
+### 3.4 Invoice message rules
 Invoice screen must show:
 - QR
 - exact amount
@@ -118,20 +157,22 @@ Invoice screen must show:
 - address
 - validity time
 - warning that the address is valid only until expiration
+- warning to send the exact amount on the correct network
+- for BTC and ETH, optional informational note that auxiliary market-rate metadata may be shown without overriding the provider invoice amount
 
 Buttons:
 - row 1: `I've paid`
 - row 2: `Refresh status`, `Cancel invoice`
 - row 3: `Main Menu`
 
-### 3.4 Returning to main menu from invoice
+### 3.5 Returning to main menu from invoice
 If user presses `Main Menu` from invoice screen:
 - delete invoice message from chat
 - keep invoice in DB if still active
 - if user starts buying again and invoice is still valid, show the same active invoice
 - if invoice expired, show expired screen instead
 
-### 3.5 Access link rule
+### 3.6 Access link rule
 Payment success screen must include the access invite link directly in the message text.
 Buttons:
 - `Main Menu`
@@ -142,9 +183,11 @@ Buttons:
 ### 4.1 One active unpaid invoice per user
 Do not create multiple active unpaid invoices for the same user.
 
-### 4.2 Lifetime access logic
-For the current MVP, Tier_1 grants lifetime access.
-Do not implement duration-based renewal logic yet.
+### 4.2 Lifetime-only access model
+After successful payment:
+- create one lifetime access record;
+- do not calculate expiration date for the paid access;
+- do not implement renewal or extension behavior.
 
 ### 4.3 Wrong Telegram account
 If another Telegram account uses the access link:
@@ -157,22 +200,13 @@ If another Telegram account uses the access link:
 There is only one admin role for MVP.
 No multi-role permission system.
 
-### 4.5 Payment provider runtime modes
-The application must support two runtime modes:
-- `mock` — used before the 2328 merchant project is approved
-- `live` — used only after approval and credential activation
-
-In `mock` mode:
-- do not make outbound 2328 API calls
-- still create local invoice/payment records
-- still render invoice screens exactly like live flow
-- still support manual status progression for development/testing
-- still process webhook-shaped payloads through the same business logic where possible
-
-In `live` mode:
-- use real 2328 credentials
-- send signed requests
-- consume real webhook callbacks
+### 4.5 Exchange-rate integrity
+For BTC and ETH invoices:
+- store the fetched market rate used for calculation;
+- store which source produced the rate;
+- store when the rate was fetched;
+- do not silently recalculate an already created invoice;
+- if auxiliary rate fetch fails before invoice creation, the provider invoice may still be created from the canonical USD amount.
 
 ## 5. What MUST NOT Be in MVP
 
@@ -186,15 +220,15 @@ Do not implement:
 - Telegram native paid subscriptions
 - multi-admin role system
 - tariff editing through admin panel
+- multiple tariff plans
+- duration variants
+- renewal logic
+- subscription expiry reminders
+- automatic channel removal by expiry schedule
 - analytics dashboard
 - microservice split
 - Postgres migration
 - message editing engine
-
-Also do not:
-- hardwire payment logic directly to live 2328 transport
-- require real 2328 approval to run the app end-to-end locally or on VPS
-- silently call live 2328 API in default configuration
 
 ## 6. Acceptable MVP Simplifications
 
@@ -206,34 +240,32 @@ The following simplifications are intentional and acceptable:
 - long polling instead of Telegram webhook
 - delete-and-send UI instead of complex message edit flow
 - no dynamic provider metadata sync
+- rate lookup may use simple public market endpoints without websocket streaming
 - no advanced retry orchestration beyond idempotent processing and scheduled checks
-- mock payment provider is the default execution mode until 2328 approval is completed
 
 ## 7. Definition of Done for MVP
 
 MVP is considered complete when all of the following are true:
 
 1. A new user can open the bot and see the main menu.
-2. The user can select Tier_1, coin, and network.
-3. The bot can create a local invoice in `mock` mode with the same app-level flow expected from 2328.
-4. The bot shows QR/address/amount/expiration correctly.
-5. The bot can confirm payment via mock provider flow and via the shared status-processing path.
-6. The bot activates a lifetime subscription exactly once.
-7. The bot sends an access link for the private channel.
-8. The bot approves the correct Telegram account and declines other accounts.
-9. Admin can manually find user, revoke access, resend link, and grant without payment.
-10. The app runs in Docker with persistent SQLite storage and a working FastAPI server.
-11. The codebase already contains the live 2328 client, signing logic, request/response models, and webhook verification, but live API execution remains disabled by default.
-12. Enabling `live` mode later should require configuration and approved project credentials, not a redesign.
+2. The user can confirm the single product, then select coin and network.
+3. The bot can fetch BTC and ETH rates before invoice creation when those assets are selected.
+4. The bot can create a valid 2328 invoice with the correct locked amount.
+5. The bot shows QR/address/amount/expiration correctly.
+6. The bot can confirm payment via webhook or manual status check.
+7. The bot activates access exactly once.
+8. The bot sends an access link for the private channel.
+9. The bot approves the correct Telegram account and declines other accounts.
+10. Admin can manually find user, revoke access, resend link, and grant without payment.
+11. The app runs in Docker with persistent SQLite storage and working 2328 webhook endpoint.
 
-## 8. Post-MVP / Activation Roadmap Items
+## 8. Post-MVP Roadmap Items
 
 These items are explicitly deferred:
-- Tier_2 implementation
+- additional paid products or plan variants
 - multiple channels/community access bundle
 - richer admin workflows
-- tariff management UI
+- product/catalog management UI
 - provider metadata sync if 2328 later exposes such endpoint
 - higher-scale database migration
 - separate RU and EN deployments from the same repo template
-- switching default payment mode from `mock` to `live` before the 2328 project is approved

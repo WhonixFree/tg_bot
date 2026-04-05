@@ -41,7 +41,6 @@ class WebhookEvent:
 @dataclass(frozen=True)
 class InvoiceView:
     public_order_id: str
-    plan_name: str
     amount_usd: Decimal
     payer_currency: str
     payer_amount: Decimal

@@ -22,18 +22,20 @@ from app.services.payments.schemas import (
 
 
 class Live2328Gateway:
-    _BASE_URL = "https://api.2328.io"
+    _BASE_URL = "https://api.2328.io/api"
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
 
     async def create_payment(self, request: PaymentCreateRequest) -> PaymentGatewayResult:
         self._require_credentials()
+        # 2328 invoice creation uses the canonical USD amount from our order.
+        # The provider returns the payable crypto amount as payer_amount.
         payload = {
+            "amount": str(request.amount_usd),
+            "currency": "USD",
             "order_id": request.order_id,
-            "amount_fiat": str(request.amount_usd),
-            "fiat_currency": "USD",
-            "payer_currency": request.payer_currency,
+            "to_currency": request.payer_currency,
             "network": request.network,
             "url_callback": f"{self._settings.app_base_url.rstrip('/')}{self._settings.payment_webhook_path}",
         }
@@ -55,18 +57,21 @@ class Live2328Gateway:
         response_payload = await self._post("/v1/payment/info", payload)
         return self._normalize_payload(response_payload)
 
-    def verify_webhook_signature(self, *, body: bytes, signature: str | None) -> bool:
-        if not signature:
+    def verify_webhook_signature(self, *, payload: Mapping[str, object]) -> bool:
+        signature = payload.get("sign")
+        if not isinstance(signature, str) or not signature:
             return False
         api_key = self._settings.merchant_api_key
         if api_key is None or not api_key.get_secret_value():
             raise RuntimeError("MERCHANT_API_KEY is required for webhook signature verification.")
+        body = self._encode_webhook_payload(payload)
         expected = self._build_signature(body=body, secret=api_key.get_secret_value())
         return hmac.compare_digest(expected, signature)
 
     def parse_webhook_event(self, payload: Mapping[str, object]) -> WebhookEvent:
         result = self._normalize_payload(payload)
-        order_id = self._extract_first_string(payload, "order_id", "provider_order_id")
+        event_payload = self._unwrap_result(payload)
+        order_id = self._extract_first_string(event_payload, "order_id", "provider_order_id")
         return WebhookEvent(
             provider_payment_uuid=result.provider_payment_uuid,
             order_id=order_id,
@@ -97,24 +102,37 @@ class Live2328Gateway:
             raise RuntimeError("Live 2328 gateway requires merchant credentials.")
 
     def _normalize_payload(self, payload: Mapping[str, object]) -> PaymentGatewayResult:
-        payer_currency = self._extract_first_string(payload, "payer_currency", "currency", "coin") or ""
-        payer_amount = self._extract_decimal(payload, "payer_amount", "amount", "payment_amount")
-        network = self._extract_first_string(payload, "network", "network_code") or ""
-        address = self._extract_first_string(payload, "address", "wallet") or ""
+        event_payload = self._unwrap_result(payload)
+        payer_currency = self._extract_first_string(
+            event_payload,
+            "payer_currency",
+            "to_currency",
+            "currency",
+            "coin",
+        ) or ""
+        payer_amount = self._extract_decimal(event_payload, "payer_amount", "payment_amount", "amount")
+        network = self._extract_first_string(event_payload, "network", "network_code") or ""
+        address = self._extract_first_string(event_payload, "address", "wallet") or ""
         provider_status = self._map_status(
-            self._extract_first_string(payload, "status", "provider_status") or "unknown"
+            self._extract_first_string(event_payload, "payment_status", "status", "provider_status")
+            or "unknown"
         )
         return PaymentGatewayResult(
-            provider_payment_uuid=self._extract_first_string(payload, "uuid", "provider_payment_uuid", "id"),
+            provider_payment_uuid=self._extract_first_string(
+                event_payload,
+                "uuid",
+                "provider_payment_uuid",
+                "id",
+            ),
             provider_status=provider_status,
             payer_currency=payer_currency,
             payer_amount=payer_amount,
             network=network,
             address=address,
-            qr_data_uri=self._extract_first_string(payload, "qr_data_uri", "qr"),
-            provider_url=self._extract_first_string(payload, "payment_url", "provider_url", "url"),
-            expires_at=self._extract_datetime(payload, "expires_at", "expired_at"),
-            txid=self._extract_first_string(payload, "txid", "hash"),
+            qr_data_uri=self._extract_first_string(event_payload, "qr_data_uri", "qr"),
+            provider_url=self._extract_first_string(event_payload, "payment_url", "provider_url", "url"),
+            expires_at=self._extract_datetime(event_payload, "expires_at", "expired_at"),
+            txid=self._extract_first_string(event_payload, "txid", "hash"),
             raw_payload_json=dict(payload),
         )
 
@@ -132,12 +150,26 @@ class Live2328Gateway:
         return mapping.get(status.lower(), PaymentStatus.UNKNOWN)
 
     def _encode_json(self, payload: Mapping[str, Any]) -> bytes:
-        return json.dumps(payload, separators=(",", ":"), sort_keys=True, ensure_ascii=False).encode("utf-8")
+        return json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+    def _encode_webhook_payload(self, payload: Mapping[str, object]) -> bytes:
+        sanitized_payload = dict(payload)
+        sanitized_payload.pop("sign", None)
+        return json.dumps(
+            sanitized_payload,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
 
     def _build_signature(self, *, body: bytes, secret: str) -> str:
         base64_body = base64.b64encode(body)
-        digest = hmac.new(secret.encode("utf-8"), base64_body, hashlib.sha256).digest()
-        return base64.b64encode(digest).decode("utf-8")
+        return hmac.new(secret.encode("utf-8"), base64_body, hashlib.sha256).hexdigest()
+
+    def _unwrap_result(self, payload: Mapping[str, object]) -> Mapping[str, object]:
+        result = payload.get("result")
+        if isinstance(result, Mapping):
+            return result
+        return payload
 
     def _extract_first_string(self, payload: Mapping[str, object], *keys: str) -> str | None:
         for key in keys:

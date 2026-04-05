@@ -3,10 +3,10 @@ from __future__ import annotations
 from sqlalchemy import inspect
 
 from app.core.constants import (
-    MVP_PLAN_CODE,
-    MVP_PLAN_DESCRIPTION,
-    MVP_PLAN_DISPLAY_NAME,
-    MVP_PLAN_PRICE_USD,
+    FIXED_PRODUCT_CODE,
+    FIXED_PRODUCT_DESCRIPTION,
+    FIXED_PRODUCT_DISPLAY_NAME,
+    FIXED_PRODUCT_PRICE_USD,
 )
 from app.core.enums import PlanAccessType
 from app.core.logging import get_logger
@@ -23,20 +23,20 @@ async def bootstrap_reference_data() -> None:
 
     async with session_manager.session() as session:
         repository = PlanRepository(session)
-        plan = await repository.get_by_code(MVP_PLAN_CODE)
+        plan = await repository.get_by_code(FIXED_PRODUCT_CODE)
         if plan is not None:
             return
 
         await repository.create(
-            code=MVP_PLAN_CODE,
-            display_name=MVP_PLAN_DISPLAY_NAME,
-            description=MVP_PLAN_DESCRIPTION,
-            price_usd=MVP_PLAN_PRICE_USD,
+            code=FIXED_PRODUCT_CODE,
+            display_name=FIXED_PRODUCT_DISPLAY_NAME,
+            description=FIXED_PRODUCT_DESCRIPTION,
+            price_usd=FIXED_PRODUCT_PRICE_USD,
             is_active=True,
             access_type=PlanAccessType.LIFETIME_GUIDE_ACCESS,
         )
         await session.commit()
-        logger.info("Seeded default MVP plan", extra={"plan_code": MVP_PLAN_CODE})
+        logger.info("Seeded fixed product compatibility row", extra={"product_code": FIXED_PRODUCT_CODE})
 
 
 async def _plans_table_exists() -> bool:

@@ -48,6 +48,8 @@ class SessionManager:
     async def dispose(self) -> None:
         if self._engine is not None:
             await self._engine.dispose()
+            self._engine = None
+            self._session_factory = None
 
 
 session_manager = SessionManager()

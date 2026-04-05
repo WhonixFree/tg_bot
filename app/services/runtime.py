@@ -15,11 +15,12 @@ from app.db.repositories.plan import PlanRepository
 from app.db.repositories.subscription import SubscriptionRepository
 from app.db.repositories.user import UserRepository
 from app.services.access.access_service import AccessService
-from app.services.catalog import CatalogService
 from app.services.messaging.message_service import MessageService
 from app.services.payments.factory import get_payment_gateway, get_webhook_gateway
 from app.services.payments.payment_service import PaymentService
+from app.services.product import ProductService
 from app.services.payments.status_processor import PaymentStatusProcessor
+from app.services.rates.service import RateService
 from app.services.subscriptions.subscription_service import SubscriptionService
 from app.services.users import UserService
 
@@ -28,7 +29,7 @@ from app.services.users import UserService
 class RuntimeServices:
     settings: Settings
     user_service: UserService
-    catalog_service: CatalogService
+    product_service: ProductService
     subscription_service: SubscriptionService
     access_service: AccessService
     payment_status_processor: PaymentStatusProcessor
@@ -50,7 +51,7 @@ def build_runtime_services(*, session: AsyncSession, bot: Bot, settings: Setting
     payment_repository = PaymentRepository(session)
     bot_message_repository = BotMessageRepository(session)
 
-    catalog_service = CatalogService(plan_repository)
+    product_service = ProductService(plan_repository)
     user_service = UserService(user_repository, resolved_settings)
     subscription_service = SubscriptionService(subscription_repository)
     access_service = AccessService(
@@ -66,20 +67,23 @@ def build_runtime_services(*, session: AsyncSession, bot: Bot, settings: Setting
         access_service=access_service,
     )
     payment_gateway = get_payment_gateway(resolved_settings)
+    rate_service = RateService(resolved_settings)
 
     return RuntimeServices(
         settings=resolved_settings,
         user_service=user_service,
-        catalog_service=catalog_service,
+        product_service=product_service,
         subscription_service=subscription_service,
         access_service=access_service,
         payment_status_processor=payment_status_processor,
         payment_service=PaymentService(
             order_repository=order_repository,
             payment_repository=payment_repository,
-            catalog_service=catalog_service,
+            product_service=product_service,
             gateway=payment_gateway,
             status_processor=payment_status_processor,
+            rate_service=rate_service,
+            use_external_rates=resolved_settings.payment_provider_mode == "live",
         ),
         message_service=MessageService(
             bot=bot,

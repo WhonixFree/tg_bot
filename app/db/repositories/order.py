@@ -34,6 +34,27 @@ class OrderRepository(Repository):
         )
         return await self.session.scalar(stmt)
 
+    async def get_active_unpaid_for_user(self, user_id: int) -> Order | None:
+        now = utc_now_naive()
+        stmt = (
+            select(Order)
+            .options(joinedload(Order.plan), selectinload(Order.payments))
+            .where(
+                Order.user_id == user_id,
+                Order.status == OrderStatus.AWAITING_PAYMENT,
+            )
+            .order_by(Order.id.desc())
+        )
+        result = await self.session.scalars(stmt)
+        for order in result.all():
+            payment = order.payments[0] if order.payments else None
+            if payment is None:
+                continue
+            expires_at = normalize_sqlite_utc(payment.expires_at)
+            if payment.provider_status == PaymentStatus.CHECK and expires_at and expires_at > now:
+                return order
+        return None
+
     async def get_active_unpaid_for_user_plan(self, user_id: int, plan_id: int) -> Order | None:
         now = utc_now_naive()
         stmt = (

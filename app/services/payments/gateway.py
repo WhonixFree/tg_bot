@@ -19,7 +19,7 @@ class PaymentGateway(Protocol):
     ) -> PaymentGatewayResult:
         ...
 
-    def verify_webhook_signature(self, *, body: bytes, signature: str | None) -> bool:
+    def verify_webhook_signature(self, *, payload: Mapping[str, object]) -> bool:
         ...
 
     def parse_webhook_event(self, payload: Mapping[str, object]) -> WebhookEvent:

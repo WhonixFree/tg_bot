@@ -12,6 +12,9 @@ class UserService:
         self._repository = repository
         self._settings = settings
 
+    async def get_by_id(self, user_id: int) -> User | None:
+        return await self._repository.get_by_id(user_id)
+
     async def upsert_from_telegram(self, telegram_user: TelegramUser) -> User:
         return await self._repository.upsert_telegram_user(
             telegram_user_id=telegram_user.id,

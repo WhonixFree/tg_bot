@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 
-from app.core.constants import MVP_PLAN_CODE
-from app.db.models import Plan
+from app.core.constants import (
+    FIXED_PRODUCT_CODE,
+    FIXED_PRODUCT_DESCRIPTION,
+    FIXED_PRODUCT_DISPLAY_NAME,
+    FIXED_PRODUCT_PRICE_USD,
+)
 from app.db.repositories.plan import PlanRepository
 
 
@@ -13,7 +18,16 @@ class NetworkOption:
     label: str
 
 
-class CatalogService:
+@dataclass(frozen=True)
+class FixedProduct:
+    id: int
+    code: str
+    display_name: str
+    description: str
+    price_usd: Decimal
+
+
+class ProductService:
     _NETWORKS: dict[str, list[NetworkOption]] = {
         "USDT": [
             NetworkOption(code="TRX-TRC20", label="TRC20"),
@@ -38,11 +52,18 @@ class CatalogService:
     def __init__(self, plan_repository: PlanRepository) -> None:
         self._plan_repository = plan_repository
 
-    async def get_mvp_plan(self) -> Plan:
-        plan = await self._plan_repository.get_by_code(MVP_PLAN_CODE)
+    async def get_product(self) -> FixedProduct:
+        # Keep one seeded row in the plans table as a DB compatibility layer for existing FKs.
+        plan = await self._plan_repository.get_by_code(FIXED_PRODUCT_CODE)
         if plan is None or not plan.is_active:
-            raise RuntimeError(f"Active plan {MVP_PLAN_CODE} is not available.")
-        return plan
+            raise RuntimeError(f"Active product compatibility row {FIXED_PRODUCT_CODE} is not available.")
+        return FixedProduct(
+            id=plan.id,
+            code=FIXED_PRODUCT_CODE,
+            display_name=FIXED_PRODUCT_DISPLAY_NAME,
+            description=FIXED_PRODUCT_DESCRIPTION,
+            price_usd=plan.price_usd or FIXED_PRODUCT_PRICE_USD,
+        )
 
     def list_coins(self) -> tuple[str, ...]:
         return self._COINS

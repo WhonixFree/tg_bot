@@ -5,9 +5,13 @@ from aiogram.types import ChatJoinRequest
 
 from app.core.config import Settings
 from app.core.enums import AccessLinkStatus, JoinRequestDecision, SubscriptionStatus
+from app.core.logging import get_logger
 from app.db.models import AccessLink, Subscription
 from app.db.repositories.access_link import AccessLinkRepository
 from app.db.repositories.join_request_log import JoinRequestLogRepository
+
+
+logger = get_logger(__name__)
 
 
 class AccessService:
@@ -30,6 +34,12 @@ class AccessService:
     async def ensure_access_link(self, *, user_id: int, subscription: Subscription) -> AccessLink:
         access_link = await self._access_link_repository.get_active_by_subscription_id(subscription.id)
         if access_link is not None:
+            logger.info(
+                "Webhook access link reused user_id=%s subscription_id=%s access_link_id=%s",
+                user_id,
+                subscription.id,
+                access_link.id,
+            )
             return access_link
 
         telegram_link = await self._bot.create_chat_invite_link(
@@ -37,12 +47,19 @@ class AccessService:
             creates_join_request=True,
             name=f"subscription-{subscription.id}",
         )
-        return await self._access_link_repository.create(
+        access_link = await self._access_link_repository.create(
             user_id=user_id,
             subscription_id=subscription.id,
             invite_link=telegram_link.invite_link,
             status=AccessLinkStatus.ACTIVE,
         )
+        logger.info(
+            "Webhook access link created user_id=%s subscription_id=%s access_link_id=%s",
+            user_id,
+            subscription.id,
+            access_link.id,
+        )
+        return access_link
 
     async def handle_join_request(self, request: ChatJoinRequest) -> None:
         invite_link = request.invite_link.invite_link if request.invite_link is not None else None

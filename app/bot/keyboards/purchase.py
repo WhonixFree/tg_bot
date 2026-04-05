@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from app.services.catalog import NetworkOption
+from app.services.product import NetworkOption
 
 
 def build_main_menu_keyboard(*, has_active_access: bool) -> InlineKeyboardMarkup:
     button = (
         InlineKeyboardButton(text="My access", callback_data="menu:my_access")
         if has_active_access
-        else InlineKeyboardButton(text="Buy subscription", callback_data="menu:buy")
+        else InlineKeyboardButton(text="Buy access", callback_data="menu:buy")
     )
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -94,6 +94,14 @@ def build_expired_invoice_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+def build_underpaid_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Main Menu", callback_data="menu:home")],
+        ]
+    )
+
+
 def build_success_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -110,7 +118,7 @@ def build_my_access_keyboard(*, has_active_access: bool) -> InlineKeyboardMarkup
         rows = [[InlineKeyboardButton(text="Main Menu", callback_data="menu:home")]]
     else:
         rows = [
-            [InlineKeyboardButton(text="Buy subscription", callback_data="menu:buy")],
+            [InlineKeyboardButton(text="Buy access", callback_data="menu:buy")],
             [InlineKeyboardButton(text="Main Menu", callback_data="menu:home")],
         ]
     return InlineKeyboardMarkup(inline_keyboard=rows)

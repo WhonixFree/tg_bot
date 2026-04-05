@@ -92,7 +92,8 @@ class Mock2328Gateway:
         amount = amount_usd / rate
         return amount.quantize(Decimal("0.00000001"), rounding=ROUND_UP)
 
-    def verify_webhook_signature(self, *, body: bytes, signature: str | None) -> bool:
+    def verify_webhook_signature(self, *, payload: Mapping[str, object]) -> bool:
+        del payload
         return False
 
     def parse_webhook_event(self, payload: Mapping[str, object]) -> WebhookEvent:

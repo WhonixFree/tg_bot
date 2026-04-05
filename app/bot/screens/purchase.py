@@ -1,61 +1,72 @@
 from __future__ import annotations
 
 from datetime import UTC
+from decimal import Decimal
 
 from app.core.config import Settings
 from app.core.enums import PaymentStatus
 from app.db.models import AccessLink
-from app.db.models import Plan
-from app.services.catalog import CatalogService
 from app.services.payments.schemas import InvoiceView
+
+
+def _status_label(status: PaymentStatus) -> str:
+    value = str(status.value).lower()
+    return {
+        "new": "waiting for payment",
+        "check": "checking payment",
+        "paid": "paid",
+        "confirmed": "paid",
+        "expired": "expired",
+        "failed": "failed",
+    }.get(value, "processing")
 
 
 def build_main_menu_text(settings: Settings) -> str:
     return (
-        f"{settings.project_description_text}\n\n"
+        "Private channel with guides, workflows, and actual AI OFM setups.\n"
+        "No fluff. Just useful stuff.\n\n"
         f"Free channel: {settings.free_channel_url}\n"
-        f"Manager: {settings.manager_contact_text}"
+        f"Contact: {settings.manager_contact_text}"
     )
 
 
 def build_already_active_text(access_link: AccessLink) -> str:
     return (
-        "Lifetime access is already active.\n\n"
-        "Use the access link from the same Telegram account that completed the purchase.\n"
+        "You already have lifetime access.\n\n"
+        "Open the link from the same Telegram account used for the payment.\n\n"
         f"{access_link.invite_link}"
     )
 
 
-def build_coin_selection_text(plan: Plan) -> str:
+def build_coin_selection_text(price_usd: Decimal) -> str:
     return (
-        "Choose the coin for your payment.\n\n"
-        f"Plan: {plan.display_name}\n"
-        f"Price: ${plan.price_usd}"
+        "Choose your payment coin.\n\n"
+        f"Price: ${price_usd}\n\n"
+        "Access unlocks right after payment."
     )
 
 
-def build_network_selection_text(plan: Plan, coin_code: str) -> str:
+def build_network_selection_text(price_usd: Decimal, coin_code: str) -> str:
     return (
-        "Choose the network.\n\n"
-        f"Plan: {plan.display_name}\n"
-        f"Price: ${plan.price_usd}\n"
-        f"Coin: {coin_code}"
+        "Now choose the network.\n\n"
+        f"Price: ${price_usd}\n"
+        f"Coin: {coin_code}\n\n"
+        "Make sure the network matches."
     )
 
 
 def build_summary_text(
     *,
-    plan: Plan,
+    price_usd: Decimal,
     coin_code: str,
-    network_code: str,
-    catalog_service: CatalogService,
+    network_label: str,
 ) -> str:
     return (
-        "Order summary\n\n"
-        f"Plan: {plan.display_name}\n"
-        f"Price: ${plan.price_usd}\n"
+        "Check the details before paying.\n\n"
+        f"Price: ${price_usd}\n"
         f"Coin: {coin_code}\n"
-        f"Network: {catalog_service.get_network_label(network_code)}"
+        f"Network: {network_label}\n\n"
+        "If everything looks right, create the invoice."
     )
 
 
@@ -66,41 +77,55 @@ def build_invoice_text(
     neutral_refresh: bool = False,
 ) -> str:
     lines = [
-        "Active invoice",
+        "Invoice is ready.",
         "",
-        f"Plan: {invoice.plan_name}",
-        f"Amount to send: {invoice.payer_amount} {invoice.payer_currency}",
+        f"Amount: {invoice.payer_amount} {invoice.payer_currency}",
         f"Network: {invoice.network_label}",
         f"Address: <code>{invoice.address}</code>",
         f"Valid until: {invoice.expires_at.astimezone(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')}",
-        f"Status: {invoice.status.value}",
+        f"Status: {_status_label(invoice.status)}",
         "",
-        "Send the exact amount to the exact network shown above.",
+        "Send the exact amount on the exact network.",
     ]
+
     if claimed_payment and invoice.status == PaymentStatus.CHECK:
-        lines.extend(["", "Payment not detected yet."])
+        lines.extend([
+            "",
+            "Payment is not detected yet. The network may still be confirming it."
+        ])
     elif neutral_refresh and invoice.status == PaymentStatus.CHECK:
-        lines.extend(["", "Status refreshed. Payment is still pending."])
+        lines.extend([
+            "",
+            "Status refreshed. Payment is still being checked."
+        ])
+
     return "\n".join(lines)
 
 
 def build_expired_invoice_text(invoice: InvoiceView) -> str:
     return (
-        "Invoice is no longer active.\n\n"
+        "This invoice has expired.\n\n"
         f"Coin: {invoice.payer_currency}\n"
-        f"Network: {invoice.network_label}\n"
+        f"Network: {invoice.network_label}\n\n"
         "Do not send funds to the old address.\n"
         "Create a new invoice to continue."
+    )
+
+
+def build_underpaid_invoice_text() -> str:
+    return (
+        "You have underpaid for this invoice.\n\n"
+        "If you want to request a refund, please contact support."
     )
 
 
 def build_payment_success_text(invoice: InvoiceView) -> str:
     return (
         "Payment confirmed.\n\n"
-        f"Amount received: {invoice.payer_amount} {invoice.payer_currency}\n"
+        f"Received: {invoice.payer_amount} {invoice.payer_currency}\n"
         f"Network: {invoice.network_label}\n"
-        "Lifetime access activated.\n\n"
-        "Use the link from the same Telegram account that completed the purchase."
+        "Your lifetime access is now unlocked.\n\n"
+        "Open the link from the same Telegram account used for the payment."
     )
 
 
@@ -113,11 +138,12 @@ def build_payment_success_with_access_text(invoice: InvoiceView, invite_link: st
 
 def build_my_access_text(access_link: AccessLink) -> str:
     return (
-        "Lifetime access is active.\n\n"
-        "Use this link from the same Telegram account used for the purchase.\n\n"
-        f"{access_link.invite_link}"
+        "Your access is active.\n\n"
+        "Here is your invite link:\n"
+        f"{access_link.invite_link}\n\n"
+        "Open it from the same Telegram account used for the payment."
     )
 
 
 def build_no_access_text() -> str:
-    return "No active access."
+    return "You do not have active access yet."

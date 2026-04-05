@@ -29,6 +29,13 @@ class Payment(TimestampMixin, Base):
     provider_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     txid: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    rate_source: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    rate_base_currency: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    rate_quote_currency: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    rate_value_usd: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)
+    rate_fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    amount_before_rounding: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)
+    raw_rate_payload_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     raw_payload_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

@@ -283,7 +283,7 @@ def upgrade() -> None:
                 "code": "TIER_1_LIFETIME",
                 "display_name": "Tier 1 Lifetime Access",
                 "description": "One-time lifetime access to the private guide channel.",
-                "price_usd": Decimal("99.00"),
+                "price_usd": Decimal("1.00"),
                 "is_active": True,
                 "access_type": "lifetime_guide_access",
             }

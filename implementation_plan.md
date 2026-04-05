@@ -17,13 +17,14 @@ Before writing code:
 
 Important rules:
 - Do not implement post-MVP features.
-- Do not implement Tier_2 in MVP.
+- Do not implement any multi-plan or tier-selection logic.
 - Do not implement duration variants, renewals, expiry reminders, or time-based channel removal in MVP.
 - Do not implement payout API.
 - Do not implement static wallets.
 - Do not implement multi-admin roles.
 - Prefer the smallest clean implementation that satisfies the scope.
-- Real 2328 transport must be implemented, but default runtime must remain `mock` until the merchant project is approved.
+- The current primary integration goal is **real 2328 payment flow**.
+- BTC and ETH market-rate data may be fetched from free public market-data APIs as auxiliary metadata before invoice creation.
 
 ---
 
@@ -37,24 +38,29 @@ Use the following stack unless explicitly overridden:
 - Alembic for migrations
 - SQLite
 - APScheduler or equivalent async scheduler
-- httpx for 2328 API
+- httpx for 2328 API and rate API calls
 - pydantic-settings for config
-- qrcode handling only if needed locally for mock mode; prefer provider QR data when live mode is enabled later
+- qrcode handling only if needed locally for mock mode; prefer provider QR data when live mode is enabled
 
 ---
 
 ## 3. Core Delivery Strategy
 
-The correct strategy is **provider abstraction first**.
+The correct strategy for the current project stage is:
+1. keep the product model **single and fixed**;
+2. implement the real 2328 integration cleanly;
+3. add a dedicated rate service for BTC/ETH conversion;
+4. keep mock mode only as a development convenience, not as the main product goal.
 
-Do not build business logic directly on top of raw 2328 HTTP calls.
-Instead, define a payment gateway interface and implement two providers:
-- `Mock2328Gateway` — default for MVP execution
-- `Live2328Gateway` — coded now, but disabled by default until merchant approval
-
-All handlers and services must depend on the gateway interface, not on httpx or raw 2328 request code.
-
-This prevents rewrites later when the real project UUID/API key become usable.
+Architectural rules:
+- do not build business logic around future tariff expansion;
+- do not keep a `plans` subsystem unless it already exists and removing it would cost more than simplifying it;
+- use one product constant like `GUIDE_ACCESS_LIFETIME`;
+- if a legacy `plans` table is already part of the schema, keep only one seeded compatibility row and remove runtime plan branching;
+- store USD as the canonical price;
+- send the canonical USD amount to 2328 when creating the invoice;
+- treat provider-returned `payer_amount` as the actual payable crypto amount for the created invoice;
+- if BTC/ETH market data is fetched locally, use it only for preview/validation/audit unless the provider contract explicitly supports fixed crypto amount input and that behavior is confirmed as required.
 
 ---
 
@@ -64,22 +70,22 @@ Build the MVP in the following order:
 
 1. Project skeleton and config
 2. Database schema and repositories
-3. Telegram bot shell and basic routing
-4. Screen rendering and single-message UI policy
-5. Catalog/plan selection flow
-6. Payment gateway abstractions and mock provider
-7. Active invoice flow and local status checks
-8. Subscription activation and access link generation
-9. Join request handling and channel access control
-10. Admin panel flows
-11. Live 2328 client, signing, schemas, and webhook verification
-12. FastAPI routes for webhook reception and health endpoints
-13. Logging, validation, and edge cases
-14. Dockerization and deployment polish
-15. End-to-end testing and MVP acceptance check
+3. Telegram bot shell and screen framework
+4. Fixed-product purchase flow
+5. BTC/ETH rate service with fallback APIs
+6. Real 2328 client: create invoice, check invoice, signing, schemas
+7. Shared payment status processing
+8. 2328 webhook route and verification
+9. Lifetime access activation and invite link generation
+10. Join request handling and channel access control
+11. Minimal admin panel flows
+12. Logging, validation, and edge cases
+13. Dockerization and deployment polish
+14. Mock mode support for local development if still useful
+15. End-to-end testing and acceptance check
 
-Do not start with live 2328 HTTP integration.
-Get the full app working end-to-end in mock mode first.
+Do not spend time on tariff architecture.
+The current implementation priority is 2328 + correct canonical USD invoice creation.
 
 ---
 
@@ -120,10 +126,10 @@ app/
     session.py
   services/
     payments/
-    subscriptions/
     access/
     messaging/
     admin/
+    rates/
   jobs/
   schemas/
   utils/
@@ -142,7 +148,7 @@ README.md
 
 ---
 
-## Phase 1 — Configuration and Runtime Modes
+## Phase 1 — Configuration and Fixed Product Settings
 
 ### Goal
 Centralize all environment and static business settings.
@@ -152,20 +158,26 @@ Centralize all environment and static business settings.
 - `ADMIN_TG_ID`
 - `PRIVATE_CHANNEL_ID`
 - `DATABASE_URL` or SQLite file path
-- `APP_BASE_URL` for future public webhook routing
+- `APP_BASE_URL` for public webhook routing
 - `BOT_PUBLIC_NAME` or project label if desired
 - `MAIN_MENU_IMAGE_PATH` or URL
 - `FREE_CHANNEL_URL`
 - `MANAGER_CONTACT_TEXT`
 - `PROJECT_DESCRIPTION_TEXT`
-- `PAYMENT_PROVIDER_MODE` with allowed values `mock` or `live`, default `mock`
-- `MERCHANT_PROJECT_UUID` optional at MVP stage
-- `MERCHANT_API_KEY` optional at MVP stage
+- `PRODUCT_CODE` default `GUIDE_ACCESS_LIFETIME`
+- `PRODUCT_NAME`
+- `PRODUCT_PRICE_USD`
+- `PAYMENT_PROVIDER_MODE` with allowed values `mock` or `live`, default `live` or explicit project choice
+- `MERCHANT_PROJECT_UUID`
+- `MERCHANT_API_KEY`
 - `PAYMENT_WEBHOOK_PATH`
+- `RATE_API_TIMEOUT_SECONDS`
+- `RATE_CACHE_TTL_SECONDS`
+- `COINGECKO_BASE_URL`
+- `BINANCE_BASE_URL`
 
 ### Required static seeded data
 - supported coins and networks
-- the single active MVP plan `TIER_1_LIFETIME` and its USD price
 - display labels for networks:
   - `TRX-TRC20 -> TRC20`
   - `BSC-BEP20 -> BEP20`
@@ -175,14 +187,15 @@ Centralize all environment and static business settings.
   - `TON -> TON`
   - `BTC -> BTC`
 
-### Mandatory runtime mode rules
-- default mode must be `mock`
-- app must boot successfully without real 2328 credentials in `mock` mode
-- app must fail fast if `live` mode is selected without required credentials
+### Mandatory runtime rules
+- the product must be represented as one fixed offer;
+- app must fail fast if `live` mode is selected without 2328 credentials;
+- BTC/ETH market-rate lookup, if used, must not override the provider invoice amount;
+- mock mode, if kept, must not affect live-flow architecture.
 
 ### Done when
 - config object is available everywhere through dependency injection or app context
-- seeded catalog structure is defined clearly
+- fixed product settings are defined clearly
 - runtime mode switching is explicit and validated
 
 ---
@@ -206,24 +219,11 @@ Fields:
 - `created_at`
 - `updated_at`
 
-#### `plans`
-Fields:
-- `id`
-- `code` unique
-- `display_name`
-- `description`
-- `price_usd`
-- `is_active`
-- `access_type`
-- `created_at`
-- `updated_at`
-
-#### `subscriptions`
+#### `access_grants`
 Fields:
 - `id`
 - `user_id`
-- `plan_id`
-- `status` (`active`, `expired`, `revoked`)
+- `status` (`active`, `revoked`)
 - `is_lifetime`
 - `starts_at`
 - `expires_at` nullable
@@ -236,8 +236,10 @@ Fields:
 - `id`
 - `order_id` unique
 - `user_id`
-- `plan_id`
+- `product_code`
 - `amount_usd`
+- `selected_currency`
+- `selected_network`
 - `payment_provider`
 - `status`
 - `created_at`
@@ -257,6 +259,12 @@ Fields:
 - `qr_data_uri` nullable
 - `txid` nullable
 - `expires_at`
+- `rate_source` nullable
+- `rate_base_currency` nullable
+- `rate_quote_currency` nullable
+- `rate_value_usd` nullable
+- `rate_fetched_at` nullable
+- `amount_before_rounding` nullable
 - `raw_payload_json`
 - `paid_at` nullable
 - `created_at`
@@ -266,7 +274,7 @@ Fields:
 Fields:
 - `id`
 - `user_id`
-- `subscription_id`
+- `access_grant_id`
 - `telegram_invite_link` unique
 - `status`
 - `created_at`
@@ -276,7 +284,7 @@ Fields:
 #### `join_requests_log`
 Fields:
 - `id`
-- `subscription_id` nullable
+- `access_grant_id` nullable
 - `expected_telegram_user_id`
 - `actual_telegram_user_id`
 - `invite_link` nullable
@@ -297,6 +305,7 @@ Fields:
 - migrations run successfully
 - DB can be created from scratch
 - repository layer can read/write basic objects
+- payment rows can persist locked BTC/ETH conversion data
 
 ---
 
@@ -307,17 +316,16 @@ Create thin repositories for persistence without business logic leakage.
 
 ### Repositories to implement
 - `UserRepository`
-- `PlanRepository`
 - `OrderRepository`
 - `PaymentRepository`
-- `SubscriptionRepository`
+- `AccessGrantRepository`
 - `AccessLinkRepository`
 - `JoinRequestLogRepository`
 - `AdminAuditRepository`
 
 ### Required behavior
 - fetch or create user by Telegram profile
-- get user active subscription
+- get user active access
 - get payment by provider uuid
 - get payment by order id
 - list recent users/payments for admin
@@ -345,14 +353,14 @@ Bring up a minimal bot with routing and the single-message policy.
 
 ### Initial screens to implement
 - main menu
-- tier select
+- offer confirmation
 - coin select
 - network select
 - summary screen
 
 ### Important rule
-Do not implement message editing engine.
-Delete previous message and send a new one.
+Do not implement a tariff selection engine.
+The product path is single and fixed.
 
 ### Done when
 - user can navigate main menu to summary screen without errors
@@ -360,13 +368,13 @@ Delete previous message and send a new one.
 
 ---
 
-## Phase 5 — Catalog and Selection Flow
+## Phase 5 — Fixed Product Purchase Flow
 
 ### Goal
-Implement Tier_1 purchase path end to end up to pre-invoice state.
+Implement the single purchase path end to end up to pre-invoice state.
 
 ### Implement
-- Tier_1 only
+- one fixed lifetime product
 - coin selection:
   - USDT
   - USDC
@@ -380,50 +388,78 @@ Implement Tier_1 purchase path end to end up to pre-invoice state.
 ### Done when
 - user can reliably select valid purchase parameters
 - invalid currency/network combinations are impossible from UI
+- there is no plan-selection state anywhere in the flow
 
 ---
 
-## Phase 6 — Payment Gateway Abstraction and Mock Provider
+## Phase 6 — BTC/ETH Market Rate Service
 
 ### Goal
-Create the payment gateway interface and make the app fully usable in mock mode.
+Implement the service that converts USD price into BTC/ETH invoice amount.
 
-### Define gateway interface
-Methods should include at minimum:
-- `create_invoice(order)`
-- `get_payment_info(payment)`
-- `verify_webhook(payload)`
-- `parse_webhook(payload)`
+### Implement
+A dedicated service, for example `CryptoRateService`, with:
+- primary source: CoinGecko simple price API
+- fallback source: Binance public spot market data API
+- methods:
+  - `get_btc_usd_rate()`
+  - `get_eth_usd_rate()`
+  - `convert_usd_to_coin(amount_usd, coin)`
+- short TTL cache
+- timeout handling
+- normalized DTO for rate result
 
-### Implement `Mock2328Gateway`
-It must:
-- generate local payment uuid
-- generate mock address
-- generate mock QR data URI or local placeholder QR
-- compute deterministic fake `payer_amount`
-- return realistic `expires_at`
-- emulate 2328-like statuses
-- support manual progression from waiting -> paid / expired / failed for development
-
-### Important rule
-Mock provider payload shape should resemble the real 2328 payload structure as closely as practical.
-This reduces migration friction later.
+### Rules
+- USD remains canonical product price
+- fetch rate only when selected coin is BTC or ETH
+- lock fetched rate into the payment record at invoice creation
+- never recalculate amount during status refresh
+- round up deterministically to supported precision
+- if no rate source succeeds, abort invoice creation cleanly
 
 ### Done when
-- invoice creation works fully without external API
-- UI screens can be driven entirely by mock provider responses
+- BTC and ETH summary screens can show converted amount
+- rate source and timestamp are available for persistence
+- failure path is user-safe
 
 ---
 
-## Phase 7 — Orders, Payments, and Active Invoice Flow
+## Phase 7 — Real 2328 Client
 
 ### Goal
-Implement the app-level invoice lifecycle in mock mode.
+Implement the real 2328 integration cleanly.
+
+### Implement
+A live gateway/service with at minimum:
+- `create_invoice(order, pricing_snapshot)`
+- `get_payment_info(payment)`
+- `verify_webhook(payload, sign_header)`
+- `parse_webhook(payload)`
+- signing helper based on Base64(JSON body) + HMAC-SHA256
+- request/response schemas
+- transport error handling and timeout handling
+
+### Important rules
+- do not hardcode invoice amounts for BTC/ETH;
+- the amount passed to 2328 must come from the locked conversion result;
+- one shared normalized payment DTO must be used by both manual checks and webhook flow.
+
+### Done when
+- live invoice creation works against 2328 contract
+- live payment info checks work
+- gateway code is isolated from handlers
+
+---
+
+## Phase 8 — Orders, Payments, and Active Invoice Flow
+
+### Goal
+Implement the app-level invoice lifecycle.
 
 ### Implement
 - create order records
 - enforce one active unpaid invoice per user
-- create payment record through gateway abstraction
+- create payment record through 2328 gateway
 - render active invoice screen with QR/address/amount/expires_at
 - `I've paid`
 - `Refresh status`
@@ -434,15 +470,16 @@ Implement the app-level invoice lifecycle in mock mode.
 ### Important behavior
 If a still-valid unpaid invoice already exists:
 - show existing invoice instead of creating a new one
+- reuse the locked amount and, for BTC/ETH, the already stored exchange rate
 
 ### Done when
-- the full invoice UI flow works end to end in mock mode
+- the full invoice UI flow works end to end
 - active invoice reuse works correctly
 - expired invoice is never reused
 
 ---
 
-## Phase 8 — Shared Payment Status Processing
+## Phase 9 — Shared Payment Status Processing
 
 ### Goal
 Centralize business logic for payment state transitions.
@@ -452,37 +489,59 @@ A service like `PaymentStatusProcessor` that accepts normalized provider payment
 - updates payment row
 - updates order status
 - performs idempotency checks
-- activates subscription on `paid` and `overpaid`
+- activates access on `paid` and `overpaid`
 - handles `underpaid_check`, `underpaid`, `cancel`, `aml_lock`
 - triggers success or failure user/admin notifications as needed
 
 ### Important rule
-Both manual status checks and future webhook callbacks must use this same processing path.
+Both manual status checks and webhook callbacks must use this same processing path.
 
 ### Done when
-- duplicate processing of the same successful payment does not duplicate subscription access
+- duplicate processing of the same successful payment does not duplicate access
 - success/failure states are stable and repeat-safe
 
 ---
 
-## Phase 9 — Subscription Activation and Access Links
+## Phase 10 — 2328 Webhook and FastAPI Routes
 
 ### Goal
-Grant subscription and generate Telegram access link.
+Expose required HTTP routes and wire them to the shared payment processor.
+
+### Routes to implement
+- `GET /health`
+- `POST /webhooks/2328`
+
+### Webhook behavior
+- verify signature through gateway/helper
+- compute dedupe key
+- reject invalid signatures
+- return HTTP 200 quickly for valid payloads
+- pass parsed payload to shared payment processing service
+
+### Done when
+- health route works
+- webhook route works structurally and shares processing path with manual checks
+
+---
+
+## Phase 11 — Access Activation and Invite Links
+
+### Goal
+Grant lifetime access and generate Telegram access link.
 
 ### Implement
-- lifetime subscription creation rules
+- lifetime access creation rules
 - create invite link with join request enabled
 - store invite link in DB
 - send success/access message containing the link directly in message text
 
 ### Done when
-- successful payment creates the lifetime subscription exactly once
+- successful payment creates the lifetime access exactly once
 - success screen shows valid access link
 
 ---
 
-## Phase 10 — Join Request Handling and Channel Control
+## Phase 12 — Join Request Handling and Channel Control
 
 ### Goal
 Automate access control to the private channel.
@@ -493,7 +552,7 @@ Automate access control to the private channel.
 - approve only if:
   - link exists
   - link belongs to user
-  - subscription is active
+  - access is active
 - decline otherwise
 - log wrong-account attempts
 - notify admin on wrong-account attempt
@@ -505,13 +564,14 @@ Automate access control to the private channel.
 
 ---
 
-## Phase 11 — Background Jobs
+## Phase 13 — Background Jobs
 
 ### Goal
-Add only the minimal invoice-related automation needed for the MVP.
+Add only the minimal automation needed for the MVP.
 
 ### Jobs to add
 - unpaid invoice expiration checker
+- optional stale rate-cache cleanup
 
 ### Important rule
 Jobs must be safe to run repeatedly.
@@ -519,10 +579,11 @@ They should be idempotent at the application level.
 
 ### Done when
 - expired invoice states are reflected correctly
+- cached market-rate data does not interfere with locked invoice amounts
 
 ---
 
-## Phase 12 — Admin Panel
+## Phase 14 — Admin Panel
 
 ### Goal
 Implement the minimum admin tooling inside Telegram.
@@ -546,57 +607,6 @@ Single admin only.
 
 ---
 
-## Phase 13 — Live 2328 Client and Webhook Support
-
-### Goal
-Code the real 2328 integration fully, but keep it behind `PAYMENT_PROVIDER_MODE=live`.
-
-### Implement `Live2328Gateway`
-Must include:
-- `POST /v1/payment` request builder
-- `POST /v1/payment/info` request builder
-- signing helper based on Base64(JSON body) + HMAC-SHA256
-- webhook signature verification
-- normalized response parsing
-- transport error handling and timeout handling
-
-### Important rules
-- do not call live transport in `mock` mode
-- live gateway must not be constructed if required credentials are missing
-- webhook payload parsing should normalize into the same app-level payment model used by mock mode
-
-### Done when
-- code for live integration exists and is unit-testable
-- switching to live mode later is config-only
-
----
-
-## Phase 14 — FastAPI Routes
-
-### Goal
-Expose required HTTP routes.
-
-### Routes to implement
-- `GET /health`
-- `POST /webhooks/2328`
-
-### Webhook behavior
-- verify signature through gateway/helper
-- compute dedupe key
-- reject invalid signatures
-- return HTTP 200 quickly for valid payloads
-- pass parsed payload to shared payment processing service
-
-### Important note
-In MVP execution, webhook route may be mostly used for internal/manual testing while app is still in mock mode.
-That is acceptable.
-
-### Done when
-- health route works
-- webhook route works structurally and shares processing path with manual checks
-
----
-
 ## Phase 15 — Edge Cases and Validation
 
 ### Goal
@@ -609,8 +619,9 @@ Stabilize the MVP.
 - user presses main menu from invoice screen
 - wrong Telegram account join request
 - admin actions on missing or revoked user state
-- bot restart with existing active invoice/subscription state
-- switching from mock to live mode without code changes
+- bot restart with existing active invoice/access state
+- BTC/ETH rate provider timeout or malformed response
+- fallback from primary rate source to secondary rate source
 
 ### Done when
 - common race/duplicate scenarios are handled safely
@@ -630,7 +641,7 @@ Package the app for VPS deployment.
 - startup command that runs bot polling + FastAPI in same process or coordinated process model
 
 ### Important rule
-The image must run correctly in `mock` mode without live provider credentials.
+The container must run correctly with the configured 2328 mode and rate API settings.
 
 ### Done when
 - app can run on a clean VPS in Docker
@@ -641,30 +652,33 @@ The image must run correctly in `mock` mode without live provider credentials.
 ## Phase 17 — Testing and Acceptance
 
 ### Goal
-Verify MVP behavior before enabling live provider mode later.
+Verify MVP behavior before release.
 
 ### Minimum test targets
 - config validation
-- plan selection logic
+- single-product purchase flow
 - one active unpaid invoice rule
+- BTC/ETH conversion logic
+- rate fallback logic
 - payment status processor idempotency
 - join request validation
 - admin actions
-- mock gateway payload normalization
-- live gateway signing helper
+- 2328 signing helper
 - webhook signature verification helper
 
 ### Acceptance checklist
-- full user purchase flow works in mock mode
+- full user purchase flow works
+- BTC and ETH invoices use locked converted amounts
 - access approval flow works in Telegram
 - admin flow works
-- live gateway code exists but remains disabled by default
+- no multi-plan logic remains in runtime flow
 
 ### Final release criterion
-The MVP is shippable before 2328 approval as long as:
-- app works end to end in mock mode
-- live gateway code is already present and isolated behind config
-- enabling live mode later requires only approved project credentials and environment changes
+The MVP is shippable when:
+- 2328 invoice creation and status checks work reliably
+- BTC/ETH conversion is fetched from free public APIs with fallback
+- payment processing is idempotent
+- access delivery works end to end
 
 ---
 
@@ -680,5 +694,7 @@ If there is conflict:
 - keep architecture clean but minimal
 - avoid speculative features
 
-Most important implementation constraint:
-- code the real 2328 integration now, but design the app so that **no live outbound 2328 calls are required for MVP delivery**.
+Most important implementation constraints:
+- do not spend time on future tariff architecture;
+- implement 2328 cleanly now;
+- for BTC/ETH, if live public market data is fetched, persist it only as auxiliary metadata and do not override the provider invoice amount.
