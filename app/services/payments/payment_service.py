@@ -16,7 +16,7 @@ from app.services.payments.status_processor import PaymentProcessingResult, Paym
 from app.services.product import ProductService
 from app.services.payments.schemas import InvoiceView, PaymentCreateRequest, WebhookEvent
 from app.services.rates.service import RateService
-from app.utils.datetime import normalize_sqlite_utc, utc_now_naive
+from app.utils.datetime import normalize_utc, utc_now
 
 
 logger = get_logger(__name__)
@@ -251,7 +251,7 @@ class PaymentService:
             address=payment.address or "",
             provider_url=payment.provider_url,
             qr_data_uri=payment.qr_data_uri,
-            expires_at=normalize_sqlite_utc(payment.expires_at) or utc_now_naive(),
+            expires_at=normalize_utc(payment.expires_at) or utc_now(),
             status=payment.provider_status,
         )
 
@@ -263,5 +263,5 @@ class PaymentService:
         )
 
     def _is_expired(self, payment: Payment) -> bool:
-        expires_at = normalize_sqlite_utc(payment.expires_at)
-        return expires_at is not None and expires_at <= utc_now_naive()
+        expires_at = normalize_utc(payment.expires_at)
+        return expires_at is not None and expires_at <= utc_now()

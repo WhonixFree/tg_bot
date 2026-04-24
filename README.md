@@ -1,13 +1,13 @@
 # Telegram Subscription Bot
 
-Minimal bootstrap for the MVP Telegram bot that sells one fixed lifetime access product to a private Telegram guide channel.
+Minimal MVP Telegram bot that sells one fixed lifetime access product to a private Telegram guide channel.
 
 The source of truth is:
-- `mvp_scope_revised.md`
-- `system_design_revised.md`
-- `implementation_plan_revised.md`
+- `mvp_scope.md`
+- `system_design.md`
+- `implementation_plan.md`
 
-## Current MVP focus
+## Current MVP Focus
 
 The current implementation focus is:
 - real 2328 invoice flow;
@@ -21,27 +21,30 @@ The legacy `plans` table is retained only as a one-row DB compatibility layer fo
 
 ## Requirements
 
-- Python 3.12+
+- Python 3.12+ for local runs
+- Docker Engine with Docker Compose plugin for the default deployment flow
 
-## Setup
+## Environment
+
+Copy the example file first:
 
 ```bash
-python3.12 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Update `.env` with real project values.
+Minimum required values:
+- `BOT_TOKEN`
+- `ADMIN_TG_ID`
+- `PRIVATE_CHANNEL_ID`
+- `APP_BASE_URL`
+- `DATABASE_URL` or `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`
+- the existing business/UI variables from `.env.example`
 
-Minimum required values for live flow:
-- Telegram bot token
-- private channel ID
-- 2328 merchant project UUID
-- 2328 merchant API key
-- webhook base URL/path
-- fixed product USD price
-- market-rate settings for BTC/ETH conversion
+Additional required values for live 2328 flow:
+- `MERCHANT_PROJECT_UUID`
+- `MERCHANT_API_KEY`
+- `PAYMENT_WEBHOOK_PATH`
+- `PAYMENT_WEBHOOK_REGISTER_URL`
 
 Recommended auxiliary rate configuration:
 - primary source: CoinGecko
@@ -53,18 +56,16 @@ For the end-to-end MVP flow, the bot must be an admin in the private guide chann
 - approve join requests
 - decline join requests
 
-## Run
+## Run With Docker Compose
 
 ```bash
-source .venv/bin/activate
-alembic upgrade head
-python main.py
+docker compose up --build
 ```
 
 This starts:
-- FastAPI on `API_HOST:API_PORT`
-- Telegram long polling in the same process
-- 2328 invoice flow according to configured provider mode
+- `db`: PostgreSQL 16 in a dedicated container with a named persistent volume
+- `bot`: FastAPI + aiogram in one container
+- Alembic migrations during bot startup
 
 Health endpoint:
 
@@ -80,6 +81,51 @@ POST {PAYMENT_WEBHOOK_PATH}
 
 For live 2328 invoices, the webhook callback is passed per invoice in the create payment request as `url_callback`.
 The app builds it from `APP_BASE_URL + PAYMENT_WEBHOOK_PATH`.
+
+## Database Configuration
+
+Preferred configuration:
+
+```text
+DATABASE_URL=postgresql+psycopg://bot:<password>@db:5432/ai_tg_bot
+```
+
+Equivalent decomposed variables:
+- `DB_HOST`
+- `DB_PORT`
+- `DB_NAME`
+- `DB_USER`
+- `DB_PASSWORD`
+
+Inside Docker Compose, the bot connects to PostgreSQL through the Docker network hostname `db`.
+
+## Migrations
+
+The bot container runs `alembic upgrade head` on startup and fails if migrations cannot be applied.
+
+Run migrations manually:
+
+```bash
+docker compose run --rm bot alembic upgrade head
+```
+
+Open a `psql` shell in the database container:
+
+```bash
+docker compose exec db psql -U "$DB_USER" -d "$DB_NAME"
+```
+
+## Local Python Run
+
+If you want to run the app directly on the host, point `DATABASE_URL` at a reachable PostgreSQL instance first.
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+alembic upgrade head
+python main.py
+```
 
 ## Pricing Rules
 
@@ -113,6 +159,8 @@ Final 2328 callback URL format:
 ```text
 https://<public-host>/webhooks/2328
 ```
+
+The checked-in 2328 reference documents `url_callback` for invoice creation, but does not document a merchant-level webhook registration endpoint. For that reason, `PAYMENT_WEBHOOK_REGISTER_URL` remains explicit and must point to the correct 2328 endpoint for your account/integration when `PAYMENT_PROVIDER_MODE=live`.
 
 ## Local Testing Guidance
 

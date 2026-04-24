@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-DEFAULT_SQLITE_PATH = "data/app.db"
 DEFAULT_PAYMENT_WEBHOOK_PATH = "/webhooks/2328"
 DEFAULT_API_HOST = "0.0.0.0"
 DEFAULT_API_PORT = 8000

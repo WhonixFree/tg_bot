@@ -8,7 +8,7 @@ from uuid import uuid4
 from app.core.enums import PaymentStatus
 from app.db.models import Payment
 from app.services.payments.schemas import PaymentCreateRequest, PaymentGatewayResult, WebhookEvent
-from app.utils.datetime import normalize_sqlite_utc, utc_now_naive
+from app.utils.datetime import normalize_utc, utc_now
 
 
 class Mock2328Gateway:
@@ -25,7 +25,7 @@ class Mock2328Gateway:
             amount_usd=request.amount_usd,
             payer_currency=request.payer_currency,
         )
-        expires_at = utc_now_naive() + timedelta(minutes=30)
+        expires_at = utc_now() + timedelta(minutes=30)
         raw_payload = {
             "mock_status": PaymentStatus.CHECK.value,
             "claim_paid_attempts": 0,
@@ -52,11 +52,11 @@ class Mock2328Gateway:
         user_confirmed_payment: bool = False,
     ) -> PaymentGatewayResult:
         payload = dict(payment.raw_payload_json or {})
-        expires_at = normalize_sqlite_utc(payment.expires_at) or utc_now_naive()
+        expires_at = normalize_utc(payment.expires_at) or utc_now()
         forced_status = payload.get("force_status")
         if forced_status:
             status = PaymentStatus(forced_status)
-        elif expires_at <= utc_now_naive():
+        elif expires_at <= utc_now():
             status = PaymentStatus.CANCEL
             payload["mock_status"] = status.value
         else:

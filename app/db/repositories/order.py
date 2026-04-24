@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload, selectinload
@@ -9,7 +8,7 @@ from sqlalchemy.orm import joinedload, selectinload
 from app.core.enums import OrderStatus, PaymentProvider, PaymentStatus
 from app.db.models import Order
 from app.db.repositories.base import Repository
-from app.utils.datetime import normalize_sqlite_utc, utc_now_naive
+from app.utils.datetime import normalize_utc, utc_now
 
 
 class OrderRepository(Repository):
@@ -35,7 +34,7 @@ class OrderRepository(Repository):
         return await self.session.scalar(stmt)
 
     async def get_active_unpaid_for_user(self, user_id: int) -> Order | None:
-        now = utc_now_naive()
+        now = utc_now()
         stmt = (
             select(Order)
             .options(joinedload(Order.plan), selectinload(Order.payments))
@@ -50,13 +49,13 @@ class OrderRepository(Repository):
             payment = order.payments[0] if order.payments else None
             if payment is None:
                 continue
-            expires_at = normalize_sqlite_utc(payment.expires_at)
+            expires_at = normalize_utc(payment.expires_at)
             if payment.provider_status == PaymentStatus.CHECK and expires_at and expires_at > now:
                 return order
         return None
 
     async def get_active_unpaid_for_user_plan(self, user_id: int, plan_id: int) -> Order | None:
-        now = utc_now_naive()
+        now = utc_now()
         stmt = (
             select(Order)
             .options(joinedload(Order.plan), selectinload(Order.payments))
@@ -72,7 +71,7 @@ class OrderRepository(Repository):
             payment = order.payments[0] if order.payments else None
             if payment is None:
                 continue
-            expires_at = normalize_sqlite_utc(payment.expires_at)
+            expires_at = normalize_utc(payment.expires_at)
             if payment.provider_status == PaymentStatus.CHECK and expires_at and expires_at > now:
                 return order
         return None
